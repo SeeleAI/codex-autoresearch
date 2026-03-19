@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,7 @@ HEADER = [
     "status",
     "description",
 ]
+EXEC_SCRATCH_ROOT = Path("/tmp/codex-autoresearch-exec")
 
 MAIN_LABEL_RE = re.compile(r"^(0|[1-9]\d*)$")
 WORKER_LABEL_RE = re.compile(r"^(0|[1-9]\d*)([a-z]+)$")
@@ -113,6 +115,60 @@ def decimal_to_json_number(value: Decimal) -> int | float:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def find_repo_root(start: Path | None = None) -> Path:
+    current = (start or Path.cwd()).resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return current
+
+
+def default_exec_state_path(cwd: Path | None = None) -> Path:
+    repo_root = find_repo_root(cwd)
+    digest = hashlib.sha256(str(repo_root).encode("utf-8")).hexdigest()[:12]
+    return EXEC_SCRATCH_ROOT / digest / "autoresearch-state.exec.json"
+
+
+def resolve_state_path(
+    requested_path: str | None,
+    *,
+    mode: str | None = None,
+    cwd: Path | None = None,
+) -> Path:
+    if requested_path:
+        return Path(requested_path)
+
+    repo_state_path = Path("autoresearch-state.json")
+    if mode == "exec":
+        return default_exec_state_path(cwd)
+    if repo_state_path.exists():
+        return repo_state_path
+
+    scratch_state_path = default_exec_state_path(cwd)
+    if scratch_state_path.exists():
+        return scratch_state_path
+    return repo_state_path
+
+
+def cleanup_exec_state(cwd: Path | None = None) -> tuple[Path, bool]:
+    state_path = default_exec_state_path(cwd)
+    removed = False
+    if state_path.exists():
+        state_path.unlink()
+        removed = True
+
+    scratch_root = EXEC_SCRATCH_ROOT.resolve()
+    parent = state_path.parent
+    while parent.exists() and parent != scratch_root:
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
+
+    return state_path, removed
 
 
 def improvement(metric: Decimal, reference: Decimal, direction: str) -> bool:

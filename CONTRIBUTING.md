@@ -140,6 +140,15 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 
 This checks that the required files exist, the helper scripts are present, and the script interfaces still behave end to end.
 
+For real skill-level validation against Codex CLI itself:
+
+```bash
+bash scripts/run_skill_e2e.sh exec-smoke
+bash scripts/run_skill_e2e.sh interactive-smoke
+```
+
+`exec-smoke` runs the real skill through `codex exec` in a disposable fixture repo and checks artifact invariants. `interactive-smoke` prepares a disposable repo and prints the exact manual wizard/`go` smoke-test steps.
+
 For behavioral validation, there is no automated test suite. The skill is Markdown instructions -- the only way to test is to use it. Symlink your branch, invoke the skill with various prompts, and verify Codex follows the updated instructions.
 
 Edge cases worth trying:

@@ -13,6 +13,7 @@ from autoresearch_helpers import (
     log_summary,
     parse_results_log,
     read_json,
+    resolve_state_path,
     write_json_atomic,
 )
 
@@ -22,7 +23,10 @@ def build_parser() -> argparse.ArgumentParser:
         description="Check whether a prior run can resume from JSON state, TSV state, or needs a fresh start."
     )
     parser.add_argument("--results-path", default="research-results.tsv")
-    parser.add_argument("--state-path", default="autoresearch-state.json")
+    parser.add_argument(
+        "--state-path",
+        help="State JSON path. Defaults to autoresearch-state.json, or the exec scratch state if present.",
+    )
     parser.add_argument(
         "--write-repaired-state",
         action="store_true",
@@ -36,7 +40,7 @@ def main() -> int:
     args = parser.parse_args()
 
     results_path = Path(args.results_path)
-    state_path = Path(args.state_path)
+    state_path = resolve_state_path(args.state_path)
 
     results_exists = results_path.exists()
     state_exists = state_path.exists()

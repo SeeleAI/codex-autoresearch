@@ -15,14 +15,29 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 class AutoresearchScriptsTest(unittest.TestCase):
     maxDiff = None
 
-    def run_script(self, script_name: str, *args: str) -> dict[str, object]:
+    def run_script(
+        self, script_name: str, *args: str, cwd: Path | None = None
+    ) -> dict[str, object]:
         completed = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / script_name), *args],
             check=True,
             capture_output=True,
             text=True,
+            cwd=cwd,
         )
         return json.loads(completed.stdout)
+
+    def run_script_text(
+        self, script_name: str, *args: str, cwd: Path | None = None
+    ) -> str:
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / script_name), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+        )
+        return completed.stdout.strip()
 
     def test_init_and_serial_iteration_state_is_consistent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -345,6 +360,79 @@ class AutoresearchScriptsTest(unittest.TestCase):
             )
             self.assertEqual(resume["decision"], "mini_wizard")
             self.assertTrue(any("results log is missing" in reason for reason in resume["reasons"]))
+
+    def test_exec_mode_uses_scratch_state_and_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            repo_state_path = tmpdir / "autoresearch-state.json"
+            scratch_state_path = Path(
+                self.run_script_text(
+                    "autoresearch_exec_state.py",
+                    "--repo-root",
+                    str(tmpdir),
+                )
+            )
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--mode",
+                "exec",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "pytest -q",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+                cwd=tmpdir,
+            )
+            self.run_script(
+                "autoresearch_record_iteration.py",
+                "--results-path",
+                str(results_path),
+                "--status",
+                "keep",
+                "--metric",
+                "8",
+                "--commit",
+                "b2c3d4e",
+                "--guard",
+                "pass",
+                "--description",
+                "better attempt",
+                cwd=tmpdir,
+            )
+
+            self.assertFalse(repo_state_path.exists())
+            self.assertTrue(scratch_state_path.exists())
+
+            state = json.loads(scratch_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["mode"], "exec")
+            self.assertEqual(state["state"]["iteration"], 1)
+            self.assertEqual(state["state"]["current_metric"], 8)
+
+            cleanup = self.run_script(
+                "autoresearch_exec_state.py",
+                "--repo-root",
+                str(tmpdir),
+                "--cleanup",
+                "--json",
+            )
+            self.assertTrue(cleanup["removed"])
+            self.assertEqual(cleanup["state_path"], str(scratch_state_path))
+            self.assertFalse(scratch_state_path.exists())
 
 
 if __name__ == "__main__":

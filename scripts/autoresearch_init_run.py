@@ -12,6 +12,7 @@ from autoresearch_helpers import (
     format_decimal,
     make_row,
     parse_decimal,
+    resolve_state_path,
     write_json_atomic,
     write_results_log,
 )
@@ -22,7 +23,10 @@ def build_parser() -> argparse.ArgumentParser:
         description="Initialize research-results.tsv and autoresearch-state.json from the baseline measurement."
     )
     parser.add_argument("--results-path", default="research-results.tsv")
-    parser.add_argument("--state-path", default="autoresearch-state.json")
+    parser.add_argument(
+        "--state-path",
+        help="State JSON path. Defaults to autoresearch-state.json, except exec mode uses scratch state under /tmp.",
+    )
     parser.add_argument("--mode", required=True)
     parser.add_argument("--goal", required=True)
     parser.add_argument("--scope", required=True)
@@ -49,7 +53,7 @@ def main() -> int:
     args = parser.parse_args()
 
     results_path = Path(args.results_path)
-    state_path = Path(args.state_path)
+    state_path = resolve_state_path(args.state_path, mode=args.mode)
 
     if not args.force:
         for path in (results_path, state_path):

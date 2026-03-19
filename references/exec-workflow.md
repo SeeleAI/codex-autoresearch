@@ -41,6 +41,7 @@ In Codex CLI, `codex exec` accepts a prompt. Do not assume a skill-specific `--s
 | Web search | available | disabled by default |
 | Parallel | user opt-in | disabled by default |
 | Lessons | read + write | read only (do not write in CI) |
+| JSON state | repo-root `autoresearch-state.json` | scratch-only under `/tmp`, removed before exit |
 | Session resume | full | disabled (fresh start; prior JSON/TSV renamed to `.prev`) |
 
 ## JSON Output Format
@@ -130,13 +131,21 @@ Exec mode always starts fresh:
 - If `autoresearch-lessons.md` exists, read it for hypothesis filtering but never modify it.
 - Do not revert prior experiment commits (assume external cleanup between CI runs).
 
+When using the bundled helper scripts in exec mode:
+- `python3 scripts/autoresearch_init_run.py --mode exec ...` defaults its JSON state to a deterministic scratch file under `/tmp/codex-autoresearch-exec/...`.
+- `python3 scripts/autoresearch_record_iteration.py ...` and `python3 scripts/autoresearch_select_parallel_batch.py ...` automatically reuse that scratch state when the repo-root JSON file is absent.
+- Before exiting, run `python3 scripts/autoresearch_exec_state.py --cleanup` so exec mode leaves only `research-results.tsv` as its persistent run artifact.
+- If you override `--state-path` manually, you are responsible for removing that custom scratch file before exit.
+
 ## Constraints
 
 - Always bounded: the `Iterations` field is mandatory to prevent runaway CI jobs.
 - No wizard: if config is incomplete, fail fast with exit code 2.
+- No launch question: do not ask for "go" or any extra confirmation; the prompt/env config is the approval.
 - No web search: CI environments should not make unexpected network calls.
 - No parallel: CI resource limits are unpredictable; use serial mode only.
 - No session resume: every CI run starts fresh. Rename old results log to `.prev` if one exists.
+- Dirty worktree: if `git status --porcelain` shows anything beyond autoresearch-owned artifacts before launch, emit a blocker and exit with code 2 instead of asking.
 - Lessons: read `autoresearch-lessons.md` if it exists in the repo (useful for persistent learning across CI runs), but **never create or modify it** during exec mode -- not even after keep or pivot decisions. Exec mode is read-only for lessons.
 
 ## Integration Points

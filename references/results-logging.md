@@ -96,6 +96,8 @@ Only integer rows (`0`, `1`, `2`, `5`) define the retained state. Worker rows ar
 
 Prefer the bundled helper scripts for stateful artifact updates:
 
+These helper scripts live in the skill bundle. Do not confuse them with the target repo's own `scripts/` directory.
+
 - `python3 scripts/autoresearch_init_run.py ...`
   Initializes `research-results.tsv` and `autoresearch-state.json` together from the baseline measurement.
 - `python3 scripts/autoresearch_record_iteration.py ...`
@@ -104,6 +106,10 @@ Prefer the bundled helper scripts for stateful artifact updates:
   Reconstructs retained state from the TSV and decides `full_resume`, `mini_wizard`, `tsv_fallback`, or `fresh_start`.
 - `python3 scripts/autoresearch_select_parallel_batch.py --batch-file ...`
   Logs worker rows, appends the main batch row, and updates JSON state once per batch.
+- `python3 scripts/autoresearch_exec_state.py`
+  Prints the deterministic exec scratch-state path under `/tmp` and cleans it up on `--cleanup`.
+
+In exec mode, the helper scripts keep JSON state in scratch storage by default instead of repo-root `autoresearch-state.json`. Clean that scratch state before exiting so exec persists only `research-results.tsv`.
 
 ## Rules
 

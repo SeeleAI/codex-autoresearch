@@ -88,8 +88,8 @@ If required fields are missing, use the wizard contract in `references/interacti
 
 ## Hard Rules
 
-1. **Ask before act.** ALWAYS scan the repo and ask at least one round of clarifying questions before starting any loop. Never silently infer all fields and start iterating.
-2. **Never ask after launch.** Once the user says "go" (or equivalent: "start", "launch", or any clear approval), the loop is fully autonomous. NEVER pause to ask the user anything -- not for clarification, not for confirmation, not for permission. If you encounter ambiguity during the loop, apply best practices and keep going. The user may be asleep.
+1. **Ask before act in interactive modes.** For `loop`, `debug`, `fix`, `security`, and `ship`, ALWAYS scan the repo and ask at least one round of clarifying questions before starting the loop. `exec` mode is the exception: it is fully configured upfront and must not stop for a launch question.
+2. **Never ask after launch.** In interactive modes, once the user says "go" (or equivalent: "start", "launch", or any clear approval), the loop is fully autonomous. `exec` mode has no launch question; once safety checks pass, it begins immediately. NEVER pause mid-run to ask the user anything -- not for clarification, not for confirmation, not for permission. If you encounter ambiguity during the loop, apply best practices and keep going. The user may be asleep.
 3. Read all in-scope files before the first write.
 4. One focused change per iteration.
 5. Mechanical verification only.
@@ -104,6 +104,7 @@ If required fields are missing, use the wizard contract in `references/interacti
 14. When stuck (3+ consecutive discards), use the PIVOT/REFINE escalation ladder from `references/pivot-protocol.md` instead of brute-force retrying.
 15. Extract lessons after every kept iteration and every pivot (see `references/lessons-protocol.md`).
 16. Prefer the bundled helper scripts over hand-editing `research-results.tsv` or `autoresearch-state.json`.
+17. In `exec` mode, never leave repo-root `autoresearch-state.json` behind. If helper scripts need state, use the exec scratch path and clean it up before exit.
 
 ## Structured Output
 

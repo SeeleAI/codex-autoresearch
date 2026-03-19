@@ -14,6 +14,7 @@ required_paths=(
   "$ROOT/references"
   "$ROOT/agents/openai.yaml"
   "$ROOT/tests"
+  "$ROOT/tests/e2e-fixtures"
 )
 
 # Core reference files
@@ -43,10 +44,13 @@ required_references=(
 required_scripts=(
   "$ROOT/scripts/validate_skill_structure.sh"
   "$ROOT/scripts/autoresearch_helpers.py"
+  "$ROOT/scripts/autoresearch_exec_state.py"
   "$ROOT/scripts/autoresearch_init_run.py"
   "$ROOT/scripts/autoresearch_record_iteration.py"
   "$ROOT/scripts/autoresearch_resume_check.py"
   "$ROOT/scripts/autoresearch_select_parallel_batch.py"
+  "$ROOT/scripts/check_skill_invariants.py"
+  "$ROOT/scripts/run_skill_e2e.sh"
 )
 
 for path in "${required_paths[@]}"; do

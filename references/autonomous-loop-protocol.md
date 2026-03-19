@@ -43,6 +43,11 @@ Before anything else, check for a prior interrupted run per `references/session-
    - JSON corrupt -> rename to `.bak`, fall back to TSV.
 3. If no prior run is detected, proceed with fresh setup.
 
+Exec-mode exception:
+- Do not resume a prior run.
+- Rename prior persistent `research-results.tsv` / `autoresearch-state.json` artifacts to `.prev` and start fresh.
+- Ignore any old exec scratch state except for cleanup.
+
 ### Run Artifact Initialization
 
 Do not create `research-results.tsv` or `autoresearch-state.json` before the baseline metric is known.
@@ -55,6 +60,11 @@ python3 scripts/autoresearch_init_run.py ...
 
 This writes the baseline TSV row (`iteration = 0`) and the matching JSON snapshot in one step.
 
+Exec-mode exception:
+- Do not create or leave repo-root `autoresearch-state.json`.
+- Let the helper scripts use their scratch JSON state under `/tmp/codex-autoresearch-exec/...`.
+- Clean that scratch state before exit with `python3 scripts/autoresearch_exec_state.py --cleanup`.
+
 ### Environment Probe
 
 Run environment detection per `references/environment-awareness.md`:
@@ -65,7 +75,7 @@ Run environment detection per `references/environment-awareness.md`:
 
 ### Ask-Before-Act
 
-Before starting any loop, ALWAYS:
+Before starting any interactive loop, ALWAYS:
 
 1. Scan the repo to understand context.
 2. Ask at least one round of clarifying questions based on what you found -- confirm scope, metric, verify command, run style (until interrupted vs bounded), and any rollback approval needed for unattended execution.
@@ -75,6 +85,12 @@ Before starting any loop, ALWAYS:
 Never silently infer all fields and start iterating. A 30-second confirmation is always cheaper than wasted iterations.
 
 **Two-phase boundary:** All questions happen BEFORE launch. Once the user says "go", the loop becomes fully autonomous. NEVER pause to ask the user anything during the loop -- not for clarification, not for confirmation, not for permission. If you encounter ambiguity mid-loop, apply best practices, log your reasoning in the commit message, and keep iterating. The user may be asleep.
+
+Exec-mode exception:
+- Do not ask clarifying or launch questions.
+- Treat the prompt/environment config as authoritative.
+- After safety checks pass, launch immediately.
+- If safety checks fail, emit the JSON error/blocker and exit with code 2.
 
 ### Safety Checks
 
@@ -104,10 +120,11 @@ The loop may commit and revert repeatedly. That is only safe when the workspace 
 If `git status --porcelain` is non-empty **during Phase 0 (before launch)**:
 
 - If the only changes are autoresearch-owned artifacts, continue.
-- Otherwise ask the user during the wizard phase: "I see uncommitted changes. Are these part of the current experiment, or should I work on a clean branch?"
+- In interactive modes, otherwise ask the user during the wizard phase: "I see uncommitted changes. Are these part of the current experiment, or should I work on a clean branch?"
 
 - If the user confirms the changes are part of the experiment, continue.
 - If the user says no, suggest `plan` mode or a clean branch/worktree.
+- In `exec` mode, any other pre-existing changes are a hard blocker. Do not ask; emit the blocker and exit with code 2.
 
 If the worktree becomes dirty **after launch** (external modification mid-loop):
 
@@ -333,6 +350,8 @@ These helpers keep two key semantics consistent:
 
 1. `state.current_metric` is the retained metric after the keep/discard decision.
 2. `state.last_trial_metric` is the metric from the latest attempted main iteration.
+
+In exec mode, this JSON state is scratch-only. It must not remain in the repo after completion.
 
 ## Phase 9: Repeat
 
