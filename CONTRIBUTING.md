@@ -81,7 +81,7 @@ The project has two layers: the **skill layer** (what Codex reads) and the **doc
 
 | If you want to change... | Edit this file |
 |--------------------------|---------------|
-| The project overview and quick start | `README.md` + `docs/i18n/README_ZH.md` |
+| The project overview and quick start | `README.md` + `docs/i18n/README_*.md` |
 | Detailed usage instructions | `docs/GUIDE.md` |
 | Copy-paste recipes and worked examples | `docs/EXAMPLES.md` |
 | Installation methods | `docs/INSTALL.md` |
@@ -98,7 +98,7 @@ When a skill-layer change affects user-visible behavior, update the documentatio
 
 4. Add field mappings to `references/interaction-wizard.md` so the wizard knows how to guide users into this mode.
 
-5. Add a section to `README.md`, `docs/i18n/README_ZH.md`, `docs/GUIDE.md`, and at least one recipe to `docs/EXAMPLES.md`.
+5. Add a section to `README.md`, update the maintained `docs/i18n/README_*.md` files, update `docs/GUIDE.md`, and add at least one recipe to `docs/EXAMPLES.md`.
 
 6. Run `bash scripts/validate_skill_structure.sh` to verify the file structure.
 
