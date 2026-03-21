@@ -1,32 +1,40 @@
 # Health Check Protocol
 
-Self-monitoring system that validates environment and run integrity at iteration boundaries. Catches problems before they corrupt results.
+Self-monitoring system that validates environment and run integrity at managed-runtime cycle boundaries. Catches problems before they corrupt results.
 
 The executable companions are:
 
 - `python3 <skill-root>/scripts/autoresearch_health_check.py`
 - `python3 <skill-root>/scripts/autoresearch_commit_gate.py`
 
+`autoresearch_health_check.py` is the canonical lightweight integrity checker. It must:
+
+- run the resume helper instead of re-parsing TSV/JSON heuristics independently,
+- report whether resume is `full_resume`, `tsv_fallback`, `mini_wizard`, or `fresh_start`,
+- treat corrupt or unreconstructable results/state combinations as blockers,
+- surface recoverable JSON/TSV divergence as warnings.
+
+The extended checks below remain protocol-level review items. They may be orchestrated by the runtime or contributor gate, but the standalone helper must not claim to perform them unless the script actually does.
+
 ## Check Frequency
 
 Here `<skill-root>` means the directory containing the loaded `SKILL.md`.
 
-### Every Iteration Boundary (Lightweight)
+### Every Managed-Runtime Cycle Boundary (Lightweight)
 
-Run between Phase 8 (Log) and Phase 9 (Repeat):
+Run before each detached Codex session. In a runtime-managed loop, this means the checks fire before the first launch and again before every relaunch:
 
 | Check | How | Failure Action |
 |-------|-----|----------------|
 | Disk space | `df -m . \| awk 'NR==2{print $4}'` >= 500MB | Warning at <1GB, hard blocker at <500MB |
 | Git state | `git status --porcelain` shows only expected files and autoresearch-owned artifacts | Warning if unexpected files; hard blocker if repo is corrupt |
-| Verify health | Last verify completed without timeout or crash | Warning if last 2 verifies timed out; hard blocker if verify command missing |
+| Verify command | Confirm the configured verify command still resolves to an executable | Hard blocker if the verify command is missing |
 | Log integrity | `python3 <skill-root>/scripts/autoresearch_resume_check.py` can reconstruct TSV state | Hard blocker if the TSV is corrupt |
 | JSON state integrity | Resume helper reports `full_resume` or a recoverable fallback | Warning on divergence; optionally rewrite state from TSV. Hard blocker if both TSV and JSON are unusable |
-| Wall-clock | Current iteration time vs rolling average | Warning if >3x average (possible resource contention) |
 
-### Every 10 Iterations (Deep Check)
+### Every 10 Iterations (Extended Review)
 
-Run at iterations 10, 20, 30, etc.:
+Run at iterations 10, 20, 30, etc. only when the workflow or runtime explicitly schedules them. These are protocol-level review items, not behavior implemented by `autoresearch_health_check.py` itself:
 
 | Check | How | Failure Action |
 |-------|-----|----------------|
@@ -36,33 +44,28 @@ Run at iterations 10, 20, 30, etc.:
 | Verify consistency | Run verify twice, compare results | Warning if results differ (flaky verify) |
 | Guard consistency | Run guard once, confirm still passes on current state | Warning if guard started failing without code changes |
 | Context health | Protocol Fingerprint Check from Phase 8.7 | Re-read protocol files; log `[RE-ANCHOR]` |
+| Wall-clock | Compare current iteration time with the recent rolling average | Warning if >3x average (possible resource contention) |
 
-## Response Actions
+## Helper Output Contract
 
-### Auto-Recovery (Safe)
+`autoresearch_health_check.py` does not mutate `research-results.tsv`, retry verify commands, or escalate warnings over time. The standalone helper returns structured JSON:
 
-These issues can be resolved without user intervention:
-
-| Issue | Recovery |
-|-------|----------|
-| Disk < 1GB but > 500MB | Log warning, continue with smaller changes |
-| Unexpected files in worktree | Ignore if outside scope, log warning |
-| Single verify timeout | Retry once, continue if successful |
-| Wall-clock spike (single) | Log timing anomaly, continue |
-
-### Warning (Log and Continue)
-
-These issues are logged but do not stop the loop:
-
-```
-[HEALTH] iteration {N}: {description}
+```json
+{
+  "decision": "ok|warn|block",
+  "warnings": ["..."],
+  "blockers": ["..."],
+  "resume_decision": "full_resume|tsv_fallback|mini_wizard|fresh_start"
+}
 ```
 
-Warnings are appended to the results log description column with a `[HEALTH]` prefix.
+Follow-up actions belong to the caller:
 
-After 3 consecutive warnings of the same type, escalate to a soft blocker announcement (continue iterating but print a prominent warning).
+- `decision = ok`: continue.
+- `decision = warn`: surface the warnings and decide whether to continue, repair state, or stop.
+- `decision = block`: stop or hand off to a human/operator.
 
-### Hard Blocker (Stop)
+## Hard Blocker Criteria
 
 These issues stop the loop immediately:
 
@@ -75,11 +78,7 @@ These issues stop the loop immediately:
 | Verify command no longer exists | Cannot measure progress |
 | All scope files deleted | Nothing to modify |
 
-On hard blocker:
-1. Attempt to revert the last uncommitted change if one is in progress.
-2. Log the blocker in the results TSV with status `blocked`.
-3. Print a completion summary with the blocker reason.
-4. Stop the loop.
+The helper itself only reports the blocker. Runtime-specific revert/log/summary behavior must be implemented by the caller if desired.
 
 ## Wall-Clock Tracking
 
@@ -101,6 +100,6 @@ Thresholds:
 - **autonomous-loop-protocol.md:** Runs as Phase 8.5 between Log and Phase 8.7 (Re-Anchoring). Context health feeds into the Protocol Fingerprint Check in Phase 8.7.
 - **environment-awareness.md:** Initial probes establish baselines for drift detection.
 - **parallel-experiments-protocol.md:** Check worktree health before each parallel batch.
-- **results-logging.md:** Health warnings are logged in the description column.
-- **session-resume-protocol.md:** JSON/TSV integrity checks use the resume helper and launch/runtime control files instead of raw row-count heuristics.
+- **results-logging.md:** The health helper returns structured findings; append TSV rows only when the runtime explicitly chooses to log a blocker or recovery event.
+- **session-resume-protocol.md:** JSON/TSV integrity checks must reuse `autoresearch_resume_check.py` decisions and launch/runtime control files instead of maintaining a second row-count heuristic.
 - **SKILL.md:** Listed in the load order for iterating modes.

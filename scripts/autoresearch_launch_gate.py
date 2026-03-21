@@ -9,17 +9,12 @@ from typing import Any
 
 from autoresearch_helpers import (
     AutoresearchError,
-    compare_summary_to_state,
     default_launch_manifest_path,
     default_runtime_state_path,
-    log_summary,
-    parse_results_log,
     read_launch_manifest,
     read_runtime_payload,
-    read_state_payload,
-    resolve_state_path_for_log,
 )
-from autoresearch_resume_check import missing_resume_config_fields
+from autoresearch_resume_check import evaluate_resume_state
 
 
 def pid_is_alive(pid: int | None) -> bool:
@@ -43,14 +38,14 @@ def evaluate_launch_context(
     ignore_running_runtime: bool = False,
 ) -> dict[str, Any]:
     reasons: list[str] = []
-    results_exists = results_path.exists()
-    parsed = None
-    repo_hint = results_path.parent
-    if results_exists:
-        parsed = parse_results_log(results_path)
-
-    state_path = resolve_state_path_for_log(state_path_arg, parsed, cwd=repo_hint)
-    state_exists = state_path.exists()
+    resume = evaluate_resume_state(
+        results_path=results_path,
+        state_path_arg=state_path_arg,
+        write_repaired_state=False,
+    )
+    state_path = Path(str(resume["state_path"]))
+    results_exists = bool(resume["has_results"])
+    state_exists = bool(resume["has_state"])
 
     launch_manifest = None
     launch_error = None
@@ -105,7 +100,7 @@ def evaluate_launch_context(
             "reasons": reasons,
         }
 
-    if not results_exists and not state_exists:
+    if resume["decision"] == "fresh_start":
         strategy = "launch_manifest_ready" if launch_manifest is not None else "cold_start"
         reason = (
             "confirmed_launch_without_artifacts"
@@ -131,7 +126,7 @@ def evaluate_launch_context(
             "reasons": reasons,
         }
 
-    if not results_exists and state_exists:
+    if resume["decision"] == "mini_wizard" and resume["detail"] == "state_without_results":
         reasons.append("State exists without a results log; a human should inspect or repair the run.")
         return {
             "decision": "needs_human",
@@ -147,11 +142,50 @@ def evaluate_launch_context(
             "reasons": reasons,
         }
 
-    if results_exists and not state_exists:
-        reasons.append("Results log exists without state; runtime can still continue from TSV reconstruction.")
+    if resume["decision"] == "full_resume":
+        reasons.extend(str(reason) for reason in resume["reasons"])
+        reasons.append(
+            "Results log and state are available; the runtime can continue from the saved config."
+            if launch_manifest is not None
+            else "Legacy results/state are resumable even without a launch manifest."
+        )
         return {
             "decision": "resumable",
-            "reason": "results_without_state",
+            "reason": "full_resume" if launch_manifest is not None else "legacy_resume",
+            "resume_strategy": "full_resume" if launch_manifest is not None else "legacy_resume",
+            "results_path": str(results_path),
+            "state_path": str(state_path),
+            "launch_path": str(launch_path),
+            "runtime_path": str(runtime_path),
+            "launch_manifest_present": launch_manifest is not None,
+            "runtime_present": runtime_payload is not None or runtime_error is not None,
+            "runtime_running": False,
+            "reasons": reasons,
+        }
+
+    if resume["decision"] == "tsv_fallback":
+        reasons.extend(str(reason) for reason in resume["reasons"])
+        if launch_manifest is None:
+            reasons.append(
+                "TSV reconstruction is available, but a detached runtime still needs a confirmed launch manifest."
+            )
+            return {
+                "decision": "needs_human",
+                "reason": "launch_manifest_required",
+                "resume_strategy": "mini_resume",
+                "results_path": str(results_path),
+                "state_path": str(state_path),
+                "launch_path": str(launch_path),
+                "runtime_path": str(runtime_path),
+                "launch_manifest_present": False,
+                "runtime_present": runtime_payload is not None or runtime_error is not None,
+                "runtime_running": False,
+                "reasons": reasons,
+            }
+        reasons.append("Results log exists without a trustworthy JSON state; runtime can continue from TSV reconstruction.")
+        return {
+            "decision": "resumable",
+            "reason": "results_without_state" if not state_exists else "tsv_fallback",
             "resume_strategy": "tsv_fallback",
             "results_path": str(results_path),
             "state_path": str(state_path),
@@ -163,57 +197,20 @@ def evaluate_launch_context(
             "reasons": reasons,
         }
 
-    payload = read_state_payload(state_path)
-    config_missing = missing_resume_config_fields(payload.get("config"))
-    if config_missing:
-        reasons.append(
-            "State config is missing required resume fields: " + ", ".join(config_missing)
-        )
-        return {
-            "decision": "needs_human",
-            "reason": "incomplete_state_config",
-            "resume_strategy": "mini_resume",
-            "results_path": str(results_path),
-            "state_path": str(state_path),
-            "launch_path": str(launch_path),
-            "runtime_path": str(runtime_path),
-            "launch_manifest_present": launch_manifest is not None,
-            "runtime_present": runtime_payload is not None or runtime_error is not None,
-            "runtime_running": False,
-            "reasons": reasons,
-        }
-
-    direction = payload.get("config", {}).get("direction")
-    if direction in {"lower", "higher"}:
-        reconstructed = log_summary(parsed, direction)
-        mismatches = compare_summary_to_state(reconstructed, payload)
-        if mismatches:
-            reasons.append(
-                "JSON state and TSV results log are inconsistent: " + "; ".join(mismatches)
-            )
-            return {
-                "decision": "needs_human",
-                "reason": "state_tsv_diverged",
-                "resume_strategy": "none",
-                "results_path": str(results_path),
-                "state_path": str(state_path),
-                "launch_path": str(launch_path),
-                "runtime_path": str(runtime_path),
-                "launch_manifest_present": launch_manifest is not None,
-                "runtime_present": runtime_payload is not None or runtime_error is not None,
-                "runtime_running": False,
-                "reasons": reasons,
-            }
-
-    reasons.append(
-        "Results log and state are available; the runtime can continue from the saved config."
-        if launch_manifest is not None
-        else "Legacy results/state are resumable even without a launch manifest."
+    reasons.extend(str(reason) for reason in resume["reasons"])
+    reason_map = {
+        "state_tsv_diverged": ("state_tsv_diverged", "none"),
+        "invalid_state_json": ("incomplete_state_config", "mini_resume"),
+        "state_without_reconstructable_tsv": ("resume_confirmation_required", "mini_resume"),
+    }
+    reason, resume_strategy = reason_map.get(
+        str(resume["detail"]),
+        ("resume_confirmation_required", "mini_resume"),
     )
     return {
-        "decision": "resumable",
-        "reason": "full_resume" if launch_manifest is not None else "legacy_resume",
-        "resume_strategy": "full_resume" if launch_manifest is not None else "legacy_resume",
+        "decision": "needs_human",
+        "reason": reason,
+        "resume_strategy": resume_strategy,
         "results_path": str(results_path),
         "state_path": str(state_path),
         "launch_path": str(launch_path),

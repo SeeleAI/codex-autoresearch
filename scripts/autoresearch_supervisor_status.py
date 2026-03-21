@@ -184,8 +184,6 @@ def goal_reached_reason(payload: dict[str, Any], current_metric: Decimal) -> str
     if payload.get("mode") == "fix":
         if direction == "lower" and current_metric == 0:
             return "Fix mode reached zero remaining errors."
-        if direction == "higher" and current_metric >= 100:
-            return "Fix mode reached 100% success."
 
     stop_condition = config.get("stop_condition")
     if not stop_condition:

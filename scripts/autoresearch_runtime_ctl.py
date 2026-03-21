@@ -18,12 +18,18 @@ from autoresearch_helpers import (
     default_launch_manifest_path,
     default_runtime_log_path,
     default_runtime_state_path,
+    has_git_repo,
+    read_state_payload,
     read_launch_manifest,
     read_runtime_payload,
     resolve_state_path_for_log,
+    synthesize_launch_manifest_from_state,
     utc_now,
     write_json_atomic,
 )
+from autoresearch_commit_gate import evaluate_commit_gate
+from autoresearch_health_check import run_health_check
+from autoresearch_lessons import append_summary_lesson_if_needed, lessons_path_from_results
 from autoresearch_launch_gate import evaluate_launch_context, pid_is_alive
 from autoresearch_resume_prompt import build_runtime_prompt
 from autoresearch_supervisor_status import evaluate_supervisor_status
@@ -31,6 +37,7 @@ from autoresearch_supervisor_status import evaluate_supervisor_status
 
 DEFAULT_RESULTS_PATH = "research-results.tsv"
 DEFAULT_CODEX_ARGS = ["--full-auto"]
+DEFAULT_HEALTH_MIN_FREE_MB = 500
 
 
 def resolve_repo_path(repo_arg: str | None) -> Path:
@@ -71,6 +78,24 @@ def persist_runtime(runtime_path: Path, payload: dict[str, Any]) -> None:
     write_json_atomic(runtime_path, payload)
 
 
+def append_completion_summary_if_possible(
+    *,
+    results_path: Path,
+    state_path: Path,
+) -> None:
+    if not results_path.exists() or not state_path.exists():
+        return
+    try:
+        state_payload = read_state_payload(state_path)
+        append_summary_lesson_if_needed(
+            lessons_path=lessons_path_from_results(results_path),
+            state_payload=state_payload,
+            current_iteration=int(state_payload.get("state", {}).get("iteration", 0)),
+        )
+    except (AutoresearchError, OSError, ValueError, TypeError):
+        return
+
+
 def manifest_config_from_args(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "goal": args.goal,
@@ -86,6 +111,17 @@ def manifest_config_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "parallel_mode": args.parallel_mode,
         "web_search": args.web_search,
     }
+
+
+def destructive_rollback_approved(launch_manifest: dict[str, Any]) -> bool:
+    approvals = launch_manifest.get("approvals", {})
+    if not isinstance(approvals, dict):
+        return False
+    for key in ("destructive_rollback", "rollback", "destructive"):
+        value = approvals.get(key)
+        if value in {True, "true", "yes", "approved", "allow"}:
+            return True
+    return False
 
 
 def runtime_summary(
@@ -110,6 +146,8 @@ def runtime_summary(
             "launch_path": str(launch_path),
             "results_path": str(results_path),
             "state_path": str(resolved_state_path),
+            "last_health_check": runtime.get("last_health_check"),
+            "last_commit_gate": runtime.get("last_commit_gate"),
         }
 
     if runtime is not None and runtime.get("status") in {"terminal", "needs_human", "stopped"}:
@@ -123,6 +161,8 @@ def runtime_summary(
             "launch_path": str(launch_path),
             "results_path": str(results_path),
             "state_path": str(resolved_state_path),
+            "last_health_check": runtime.get("last_health_check"),
+            "last_commit_gate": runtime.get("last_commit_gate"),
         }
 
     launch_context = evaluate_launch_context(
@@ -205,12 +245,65 @@ def create_launch_manifest(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def evaluate_runtime_preflight(
+    *,
+    repo: Path,
+    results_path: Path,
+    state_path_arg: str | None,
+    launch_manifest: dict[str, Any],
+    min_free_mb: int,
+) -> dict[str, Any]:
+    config = dict(launch_manifest.get("config", {}))
+    health = run_health_check(
+        repo=repo,
+        results_path=results_path,
+        state_path_arg=state_path_arg,
+        verify_command=str(config.get("verify", "")),
+        min_free_mb=min_free_mb,
+    )
+    commit_gate: dict[str, Any] = {
+        "decision": "skipped",
+        "phase": "precommit",
+        "rollback_policy": str(config.get("rollback_policy") or ""),
+        "destructive_approved": False,
+        "scope_patterns": [],
+        "unexpected_worktree": [],
+        "staged_artifacts": [],
+        "warnings": [],
+        "blockers": [],
+    }
+    if has_git_repo(repo):
+        commit_gate = evaluate_commit_gate(
+            repo=repo,
+            phase="precommit",
+            rollback_policy=str(config.get("rollback_policy") or ""),
+            destructive_approved=destructive_rollback_approved(launch_manifest),
+            scope_text=str(config.get("scope") or ""),
+        )
+
+    blockers = list(commit_gate.get("blockers", [])) + list(health.get("blockers", []))
+    warnings = list(commit_gate.get("warnings", [])) + list(health.get("warnings", []))
+    decision = "allow"
+    reason = "runtime_preflight_ok"
+    if blockers:
+        decision = "block"
+        reason = "runtime_preflight_blocked"
+    elif warnings:
+        decision = "warn"
+        reason = "runtime_preflight_warn"
+    return {
+        "decision": decision,
+        "reason": reason,
+        "warnings": warnings,
+        "blockers": blockers,
+        "health_check": health,
+        "commit_gate": commit_gate,
+    }
+
+
 def start_runtime(args: argparse.Namespace) -> dict[str, Any]:
     repo = resolve_repo_path(args.repo)
     launch_path = resolve_repo_relative(repo, args.launch_path, default_launch_manifest_path(repo))
-    # The detached runtime is only valid after the interactive "go" boundary has
-    # produced a confirmed launch manifest.
-    read_launch_manifest(launch_path)
     results_path = resolve_repo_relative(repo, args.results_path, repo / DEFAULT_RESULTS_PATH)
     runtime_path = resolve_repo_relative(repo, args.runtime_path, default_runtime_state_path(repo))
     log_path = resolve_repo_relative(repo, args.log_path, default_runtime_log_path(repo))
@@ -230,6 +323,28 @@ def start_runtime(args: argparse.Namespace) -> dict[str, Any]:
         raise AutoresearchError(
             f"Cannot start runtime while launch gate reports {launch_context['decision']}: {launch_context['reason']}"
         )
+
+    if not launch_path.exists():
+        if launch_context["reason"] != "legacy_resume":
+            raise AutoresearchError(f"Missing JSON file: {launch_path}")
+        synthesize_launch_manifest_from_state(
+            launch_path=launch_path,
+            state_path=Path(launch_context["state_path"]),
+        )
+
+    # The detached runtime is only valid after the interactive "go" boundary has
+    # produced a confirmed launch manifest or the controller has synthesized one
+    # from a validated legacy full-resume state.
+    launch_manifest = read_launch_manifest(launch_path)
+    preflight = evaluate_runtime_preflight(
+        repo=repo,
+        results_path=results_path,
+        state_path_arg=state_path_arg,
+        launch_manifest=launch_manifest,
+        min_free_mb=args.min_free_mb,
+    )
+    if preflight["decision"] == "block":
+        raise AutoresearchError("Runtime preflight failed: " + "; ".join(preflight["blockers"]))
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_handle = log_path.open("a", encoding="utf-8")
@@ -283,6 +398,8 @@ def start_runtime(args: argparse.Namespace) -> dict[str, Any]:
         terminal_reason="none",
     )
     runtime["launch_context"] = launch_context
+    runtime["last_health_check"] = preflight["health_check"]
+    runtime["last_commit_gate"] = preflight["commit_gate"]
     persist_runtime(runtime_path, runtime)
     return {
         "status": "running",
@@ -336,7 +453,6 @@ def run_runtime(args: argparse.Namespace) -> int:
     if args.codex_arg:
         codex_args = args.codex_arg
     startup_failure_count = 0
-
     while True:
         launch_context = evaluate_launch_context(
             results_path=results_path,
@@ -350,6 +466,24 @@ def run_runtime(args: argparse.Namespace) -> int:
             runtime["terminal_reason"] = launch_context["reason"]
             runtime["last_decision"] = launch_context["decision"]
             runtime["last_reason"] = launch_context["reason"]
+            runtime["launch_context"] = launch_context
+            persist_runtime(runtime_path, runtime)
+            return 2
+
+        preflight = evaluate_runtime_preflight(
+            repo=repo,
+            results_path=results_path,
+            state_path_arg=state_path_arg,
+            launch_manifest=launch_manifest,
+            min_free_mb=args.min_free_mb,
+        )
+        runtime["last_health_check"] = preflight["health_check"]
+        runtime["last_commit_gate"] = preflight["commit_gate"]
+        if preflight["decision"] == "block":
+            runtime["status"] = "needs_human"
+            runtime["terminal_reason"] = preflight["reason"]
+            runtime["last_decision"] = "needs_human"
+            runtime["last_reason"] = preflight["reason"]
             runtime["launch_context"] = launch_context
             persist_runtime(runtime_path, runtime)
             return 2
@@ -397,6 +531,12 @@ def run_runtime(args: argparse.Namespace) -> int:
             time.sleep(args.sleep_seconds)
             continue
 
+        if decision in {"stop", "needs_human"}:
+            append_completion_summary_if_possible(
+                results_path=results_path,
+                state_path=Path(str(runtime["state_path"])),
+            )
+
         runtime["status"] = "terminal" if decision == "stop" else "needs_human"
         runtime["terminal_reason"] = reason
         persist_runtime(runtime_path, runtime)
@@ -429,6 +569,10 @@ def stop_runtime(args: argparse.Namespace) -> dict[str, Any]:
             except ProcessLookupError:
                 pass
 
+    append_completion_summary_if_possible(
+        results_path=Path(str(runtime["results_path"])),
+        state_path=Path(str(runtime["state_path"])),
+    )
     runtime["status"] = "stopped"
     runtime["terminal_reason"] = "user_stopped"
     persist_runtime(runtime_path, runtime)
@@ -473,6 +617,7 @@ def add_runtime_start_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--log-path")
     parser.add_argument("--sleep-seconds", type=int, default=5)
     parser.add_argument("--max-stagnation", type=int, default=3)
+    parser.add_argument("--min-free-mb", type=int, default=DEFAULT_HEALTH_MIN_FREE_MB)
     parser.add_argument("--codex-bin", default="codex")
     parser.add_argument("--codex-arg", action="append", default=[])
 

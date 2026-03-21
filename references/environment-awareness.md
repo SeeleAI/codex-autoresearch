@@ -120,6 +120,6 @@ Include environment summary in the first line of the results log comments:
 ## Refresh Policy
 
 - Full probe: once per run start.
-- Disk free: re-check every 10 iterations (part of health check).
+- Disk free: re-check at every managed-runtime cycle boundary as part of health check.
 - GPU state: re-check if a `crash` status mentions GPU/CUDA/memory errors.
 - Do not re-probe CPU, RAM, or toolchains mid-run.

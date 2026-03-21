@@ -86,6 +86,15 @@ It reconstructs retained state from the TSV, tolerates parallel worker rows, and
 - `tsv_fallback`
 - `fresh_start`
 
+The helper's decision is the single control-plane source for:
+
+- `autoresearch_launch_gate.py`
+- `autoresearch_health_check.py`
+- `autoresearch_resume_prompt.py`
+- any runtime-managed resume prompt generation inside `autoresearch_runtime_ctl.py`
+
+Do not reimplement a second TSV/JSON reconciliation path in those scripts.
+
 Use `--write-repaired-state` when TSV recovery is valid and you want to rewrite `autoresearch-state.json` before resuming.
 
 ## Recovery Priority Matrix
@@ -110,8 +119,9 @@ When the helper reports `full_resume`:
    ```
 3. Skip the wizard entirely.
 4. Read the lessons file if present.
-5. Run the verify command once as a sanity check.
+5. Let the runtime preflight confirm that the configured verify command still resolves before continuing.
 6. If the current metric drifted, log a `drift` row and continue from the recalibrated state.
+7. If this is a legacy run that predates `autoresearch-launch.json`, both `autoresearch_runtime_ctl.py` and `autoresearch_resume_prompt.py` may synthesize the launch manifest from the validated JSON config before continuing.
 
 ### Priority 2: Mini-Wizard
 
@@ -136,7 +146,8 @@ When JSON is missing or unusable but the helper reports `tsv_fallback`:
    python3 <skill-root>/scripts/autoresearch_resume_check.py --write-repaired-state
    ```
 3. Present one condensed confirmation block sourced from the reconstructed state.
-4. After confirmation, continue from the next main iteration.
+4. After confirmation, create a fresh launch manifest and continue from the next main iteration.
+5. Do not start the detached runtime directly from bare TSV fallback without a confirmed launch manifest.
 
 ### Priority 4: Fresh Start
 

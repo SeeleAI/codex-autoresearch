@@ -124,7 +124,7 @@ In exec mode, the helper scripts keep JSON state in scratch storage by default i
 - Never commit the log.
 - Treat the log, JSON state, and lessons file as autoresearch-owned artifacts: leave them unstaged and ignore them when checking experiment scope.
 - Re-read the latest entries before choosing the next idea.
-- Health check warnings are logged in the description column with a `[HEALTH]` prefix.
+- The standalone health-check helper reports warnings/blockers as JSON. Append a TSV row only when the runtime explicitly decides to log a blocker or recovery event.
 
 ## Cross-Validation with JSON State
 

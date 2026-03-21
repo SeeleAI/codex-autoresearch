@@ -7,8 +7,10 @@ from pathlib import Path
 
 from autoresearch_helpers import (
     AutoresearchError,
+    archive_path_to_prev,
     build_state_payload,
     cleanup_exec_state,
+    default_state_path,
     decimal_to_json_number,
     format_decimal,
     make_row,
@@ -63,6 +65,8 @@ def main() -> int:
     if args.mode == "exec" and args.state_path is None and not args.force:
         if state_path.exists():
             cleanup_exec_state()
+        archive_path_to_prev(results_path)
+        archive_path_to_prev(default_state_path(repo_hint))
 
     if not args.force:
         for path in (results_path, state_path):

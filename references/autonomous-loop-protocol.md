@@ -398,7 +398,7 @@ After every PIVOT, extract a lesson per `references/lessons-protocol.md`.
 
 ### Lessons Extraction
 
-After every `keep` decision, extract a positive lesson. After every PIVOT, extract a strategic lesson. At run completion, extract a summary lesson. See `references/lessons-protocol.md` for structure and persistence.
+After every `keep` decision, `autoresearch_record_iteration.py` appends a positive lesson immediately after the authoritative TSV/JSON update. After every PIVOT, the same helper appends a strategic lesson the same way. At managed-runtime completion, `autoresearch_runtime_ctl.py` appends a summary lesson when no lesson was written in the last 5 iterations of the same run. See `references/lessons-protocol.md` for structure and persistence.
 
 ## Phase 8.5: Health Check
 
@@ -406,10 +406,12 @@ Health Check runs strictly between Log (Phase 8) and Phase 8.7 (Re-Anchoring). T
 
 Run health checks per `references/health-check-protocol.md`:
 
-- **Every iteration:** disk space, git state, verify command existence, wall-clock tracking.
-- **Every 10 iterations:** scope integrity, environment drift, verify/guard consistency, log integrity deep check, context health (Protocol Fingerprint Check).
+- **Every managed-runtime cycle boundary:** before each detached Codex session (and therefore before every relaunch), `autoresearch_runtime_ctl.py` runs `autoresearch_health_check.py` for disk space, git state, verify command existence, and resume-helper-based TSV/JSON integrity.
+- **Commit safety at the same boundary:** when the repo is git-backed, `autoresearch_runtime_ctl.py` also runs `autoresearch_commit_gate.py` with the launch-manifest scope before each detached session. Relaunch is blocked if staged autoresearch artifacts or out-of-scope worktree changes are present.
+- **Extended review:** scope integrity, environment drift, verify/guard consistency, and context health when the workflow explicitly schedules the protocol-level extended checks.
 - Log integrity should use the helper-script reconstruction of main rows and retained state, not raw TSV row counts.
-- Auto-recover safe issues. Hard blocker on unrecoverable issues.
+- `autoresearch_health_check.py` only returns structured `ok / warn / block` findings. Any retries, repairs, or blocker logging must be implemented by the caller.
+- Within a live Codex session, the model must still honor the same scope-aware commit rule before creating a trial commit; the runtime controller can only enforce these checks between detached sessions.
 
 ## Phase 8.7: Protocol Re-Anchoring
 

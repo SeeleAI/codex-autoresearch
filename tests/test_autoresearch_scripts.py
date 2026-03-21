@@ -77,7 +77,7 @@ class AutoresearchScriptsTest(unittest.TestCase):
         scope: str = "src/**/*.py",
         metric_name: str = "failure count",
         direction: str = "lower",
-        verify: str = "pytest -q",
+        verify: str = "python3 -c pass",
         guard: str | None = "python -m py_compile src",
         stop_condition: str | None = None,
     ) -> dict[str, object]:
@@ -133,7 +133,7 @@ class AutoresearchScriptsTest(unittest.TestCase):
         scope: str = "src/**/*.py",
         metric_name: str = "failure count",
         direction: str = "lower",
-        verify: str = "pytest -q",
+        verify: str = "python3 -c pass",
         guard: str = "python -m py_compile src",
     ) -> dict[str, object]:
         return self.run_script(
@@ -184,7 +184,7 @@ class AutoresearchScriptsTest(unittest.TestCase):
                 "--direction",
                 "lower",
                 "--verify",
-                "pytest -q",
+                "python3 -c pass",
                 "--baseline-metric",
                 "10",
                 "--baseline-commit",
@@ -268,7 +268,7 @@ class AutoresearchScriptsTest(unittest.TestCase):
                 "--direction",
                 "lower",
                 "--verify",
-                "pytest -q",
+                "python3 -c pass",
                 "--baseline-metric",
                 "10",
                 "--baseline-commit",
@@ -316,7 +316,7 @@ class AutoresearchScriptsTest(unittest.TestCase):
                 "--direction",
                 "lower",
                 "--verify",
-                "pytest -q",
+                "python3 -c pass",
                 "--baseline-metric",
                 "10",
                 "--baseline-commit",
@@ -1048,6 +1048,52 @@ class AutoresearchScriptsTest(unittest.TestCase):
             self.assertEqual(state["config"]["goal"], "Reduce failures")
             self.assertFalse(state.get("stale", False))
 
+    def test_exec_init_run_archives_prior_results_and_repo_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / ".git").mkdir()
+            results_path = repo / "research-results.tsv"
+            repo_state_path = repo / "autoresearch-state.json"
+            prev_results_path = repo / "research-results.prev.tsv"
+            prev_state_path = repo / "autoresearch-state.prev.json"
+
+            results_path.write_text("legacy results\n", encoding="utf-8")
+            repo_state_path.write_text('{"legacy": true}\n', encoding="utf-8")
+
+            result = self.run_script(
+                "autoresearch_init_run.py",
+                "--mode",
+                "exec",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "pytest -q",
+                "--iterations",
+                "5",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+                cwd=repo,
+            )
+
+            self.assertTrue(results_path.exists())
+            self.assertTrue(prev_results_path.exists())
+            self.assertEqual(prev_results_path.read_text(encoding="utf-8"), "legacy results\n")
+            self.assertFalse(repo_state_path.exists())
+            self.assertTrue(prev_state_path.exists())
+            self.assertEqual(prev_state_path.read_text(encoding="utf-8"), '{"legacy": true}\n')
+            self.assertNotEqual(Path(result["state_path"]), repo_state_path)
+            self.assertTrue(Path(result["state_path"]).exists())
+
     def test_record_iteration_does_not_use_exec_scratch_for_loop_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -1315,6 +1361,89 @@ class AutoresearchScriptsTest(unittest.TestCase):
             )
             self.assertNotEqual(completed.returncode, 0)
             self.assertIn("did not report a commit", completed.stderr)
+
+    def test_parallel_batch_keep_preserves_supervisor_and_appends_lesson(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            state_path = tmpdir / "autoresearch-state.json"
+            batch_path = tmpdir / "batch.json"
+            lessons_path = tmpdir / "autoresearch-lessons.md"
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "pytest -q",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+                "--parallel-mode",
+                "parallel",
+            )
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            payload["supervisor"] = {
+                "recommended_action": "relaunch",
+                "should_continue": True,
+                "terminal_reason": "none",
+                "last_exit_kind": "turn_complete",
+                "last_turn_finished_at": "2026-03-21T00:00:00Z",
+                "restart_count": 1,
+                "stagnation_count": 0,
+            }
+            state_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            batch_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "worker_id": "a",
+                            "commit": "c3d4e5f",
+                            "metric": 7,
+                            "guard": "pass",
+                            "description": "narrowed hot path",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            self.run_script(
+                "autoresearch_select_parallel_batch.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--batch-file",
+                str(batch_path),
+            )
+
+            updated = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(updated["supervisor"]["recommended_action"], "relaunch")
+            lessons = self.run_script(
+                "autoresearch_lessons.py",
+                "list",
+                "--lessons-path",
+                str(lessons_path),
+            )
+            self.assertEqual(len(lessons), 1)
+            self.assertEqual(lessons[0]["outcome"], "keep")
+            self.assertEqual(lessons[0]["iteration"], "1")
 
     def test_drift_and_later_keep_preserve_historical_best_metric(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1843,6 +1972,70 @@ class AutoresearchScriptsTest(unittest.TestCase):
             self.assertEqual(status["decision"], "stop")
             self.assertEqual(status["reason"], "goal_reached")
 
+    def test_supervisor_status_does_not_auto_stop_fix_mode_higher_without_stop_condition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            state_path = tmpdir / "autoresearch-state.json"
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "fix",
+                "--goal",
+                "Increase passing checks",
+                "--scope",
+                "tests/**/*.py",
+                "--metric-name",
+                "passing checks",
+                "--direction",
+                "higher",
+                "--verify",
+                "pytest -q",
+                "--baseline-metric",
+                "99",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline passing checks",
+            )
+            self.run_script(
+                "autoresearch_record_iteration.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--status",
+                "keep",
+                "--metric",
+                "100",
+                "--commit",
+                "keephigh",
+                "--guard",
+                "pass",
+                "--description",
+                "improved passing checks",
+            )
+
+            status = self.run_script(
+                "autoresearch_supervisor_status.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--after-run",
+                "--write-state",
+            )
+            self.assertEqual(status["decision"], "relaunch")
+            self.assertEqual(status["reason"], "none")
+            self.assertTrue(
+                any("loop remains resumable" in reason for reason in status["reasons"])
+            )
+
     def test_supervisor_status_does_not_auto_stop_debug_mode_at_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -2170,6 +2363,57 @@ class AutoresearchScriptsTest(unittest.TestCase):
             self.assertEqual(status["status"], "idle")
             self.assertEqual(status["reason"], "confirmed_launch_without_artifacts")
 
+    def test_legacy_resume_prompt_synthesizes_launch_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            state_path = tmpdir / "autoresearch-state.json"
+            launch_path = tmpdir / "autoresearch-launch.json"
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "python3 -c pass",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+            )
+
+            prompt = self.run_script_text(
+                "autoresearch_resume_prompt.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--launch-path",
+                str(launch_path),
+                "--runtime-path",
+                str(tmpdir / "autoresearch-runtime.json"),
+            )
+            self.assertTrue(launch_path.exists())
+            manifest = json.loads(launch_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["resume_seed"]["source"], "legacy_state")
+            self.assertIn("Use", prompt)
+            self.assertIn(str(launch_path), prompt)
+            self.assertIn("Do not run the interactive wizard again.", prompt)
+
     def test_launch_gate_requires_human_when_state_and_tsv_diverge(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -2220,6 +2464,85 @@ class AutoresearchScriptsTest(unittest.TestCase):
                 any("current_metric: state=999 tsv=10" in reason for reason in gate["reasons"])
             )
 
+    def test_launch_gate_uses_resume_helper_for_corrupt_results_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            state_path = tmpdir / "autoresearch-state.json"
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "pytest -q",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+            )
+            with results_path.open("a", encoding="utf-8") as handle:
+                handle.write("corrupt\n")
+
+            gate = self.run_script(
+                "autoresearch_launch_gate.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+            )
+            self.assertEqual(gate["decision"], "needs_human")
+            self.assertEqual(gate["reason"], "resume_confirmation_required")
+            self.assertEqual(gate["resume_strategy"], "mini_resume")
+            self.assertTrue(
+                any("TSV is unavailable" in reason or "TSV unavailable" in reason for reason in gate["reasons"])
+            )
+
+    def test_launch_gate_requires_manifest_confirmation_for_tsv_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            results_path.write_text(
+                "\n".join(
+                    [
+                        "# metric_direction: lower",
+                        "# mode: loop",
+                        "iteration\tcommit\tmetric\tdelta\tguard\tstatus\tdescription",
+                        "0\ta1b2c3d\t10\t0\t-\tbaseline\tbaseline failures",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            gate = self.run_script(
+                "autoresearch_launch_gate.py",
+                "--results-path",
+                str(results_path),
+                "--launch-path",
+                str(tmpdir / "autoresearch-launch.json"),
+                "--runtime-path",
+                str(tmpdir / "autoresearch-runtime.json"),
+            )
+            self.assertEqual(gate["decision"], "needs_human")
+            self.assertEqual(gate["reason"], "launch_manifest_required")
+            self.assertEqual(gate["resume_strategy"], "mini_resume")
+            self.assertTrue(any("confirmed launch manifest" in reason for reason in gate["reasons"]))
+
     def test_runtime_start_requires_confirmed_launch_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -2234,6 +2557,137 @@ class AutoresearchScriptsTest(unittest.TestCase):
             self.assertNotEqual(completed.returncode, 0)
             self.assertIn("Missing JSON file", completed.stderr)
             self.assertFalse((tmpdir / "autoresearch-runtime.json").exists())
+
+    def test_runtime_start_synthesizes_manifest_for_legacy_full_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            state_path = tmpdir / "autoresearch-state.json"
+            fake_codex_path = tmpdir / "fake-codex"
+            self.write_sleeping_fake_codex(fake_codex_path)
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "python3 -c pass",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+            )
+
+            gate = self.run_script(
+                "autoresearch_launch_gate.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--launch-path",
+                str(tmpdir / "autoresearch-launch.json"),
+                "--runtime-path",
+                str(tmpdir / "autoresearch-runtime.json"),
+            )
+            self.assertEqual(gate["decision"], "resumable")
+            self.assertEqual(gate["reason"], "legacy_resume")
+
+            started = self.run_script(
+                "autoresearch_runtime_ctl.py",
+                "start",
+                "--repo",
+                str(tmpdir),
+                "--codex-bin",
+                str(fake_codex_path),
+            )
+            self.assertEqual(started["status"], "running")
+            launch_manifest = json.loads((tmpdir / "autoresearch-launch.json").read_text(encoding="utf-8"))
+            self.assertEqual(launch_manifest["original_goal"], "Reduce failures")
+            self.assertEqual(launch_manifest["resume_seed"]["source"], "legacy_state")
+
+            self.run_script(
+                "autoresearch_runtime_ctl.py",
+                "stop",
+                "--repo",
+                str(tmpdir),
+            )
+
+    def test_runtime_start_blocks_on_unexpected_out_of_scope_worktree_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
+            self.create_launch_manifest(repo, verify="python3 -c pass")
+            (repo / "notes.txt").write_text("user drift\n", encoding="utf-8")
+
+            completed = self.run_script_completed(
+                "autoresearch_runtime_ctl.py",
+                "start",
+                "--repo",
+                str(repo),
+                "--codex-bin",
+                "/bin/echo",
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("Runtime preflight failed", completed.stderr)
+            self.assertIn("unexpected worktree changes before commit", completed.stderr)
+            self.assertFalse((repo / "autoresearch-runtime.json").exists())
+
+    def test_runtime_start_allows_in_scope_worktree_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
+            (repo / "src").mkdir(parents=True, exist_ok=True)
+            (repo / "src" / "core.py").write_text("print('ok')\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(repo), "config", "user.email", "test@example.com"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(repo), "config", "user.name", "Test User"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(repo), "add", "src/core.py"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(repo), "commit", "-m", "seed scope file"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.create_launch_manifest(repo, verify="python3 -c pass")
+            (repo / "src" / "core.py").write_text("print('changed')\n", encoding="utf-8")
+
+            started = self.run_script(
+                "autoresearch_runtime_ctl.py",
+                "start",
+                "--repo",
+                str(repo),
+                "--codex-bin",
+                "/bin/echo",
+            )
+            self.assertEqual(started["status"], "running")
 
     def test_runtime_launch_command_atomically_creates_manifest_and_starts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2256,6 +2710,68 @@ class AutoresearchScriptsTest(unittest.TestCase):
                 str(tmpdir),
             )
             self.assertEqual(stopped["status"], "stopped")
+
+    def test_runtime_stop_appends_summary_lesson_when_state_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            state_path = tmpdir / "autoresearch-state.json"
+            fake_codex_path = tmpdir / "fake-codex"
+            lessons_path = tmpdir / "autoresearch-lessons.md"
+
+            self.create_launch_manifest(tmpdir)
+            self.write_sleeping_fake_codex(fake_codex_path)
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "pytest -q",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+            )
+
+            self.run_script(
+                "autoresearch_runtime_ctl.py",
+                "start",
+                "--repo",
+                str(tmpdir),
+                "--codex-bin",
+                str(fake_codex_path),
+            )
+            self.wait_for_runtime_status(tmpdir, {"running"})
+            self.run_script(
+                "autoresearch_runtime_ctl.py",
+                "stop",
+                "--repo",
+                str(tmpdir),
+            )
+
+            entries = self.run_script(
+                "autoresearch_lessons.py",
+                "list",
+                "--lessons-path",
+                str(lessons_path),
+            )
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["outcome"], "summary")
+            self.assertEqual(entries[0]["iteration"], "0")
 
     def test_runtime_controller_can_start_report_running_and_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2489,6 +3005,24 @@ class AutoresearchScriptsTest(unittest.TestCase):
                 )
             )
 
+    def test_commit_gate_blocks_dirty_precommit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
+            (repo / "notes.txt").write_text("user change\n", encoding="utf-8")
+
+            result = self.run_script(
+                "autoresearch_commit_gate.py",
+                "--repo",
+                str(repo),
+                "--phase",
+                "precommit",
+            )
+            self.assertEqual(result["decision"], "block")
+            self.assertTrue(
+                any("unexpected worktree changes before commit" in blocker for blocker in result["blockers"])
+            )
+
     def test_health_check_reports_warning_for_unexpected_worktree_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -2637,6 +3171,56 @@ class AutoresearchScriptsTest(unittest.TestCase):
                 )
             )
 
+    def test_health_check_warns_when_state_diverges_from_tsv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
+            results_path = repo / "research-results.tsv"
+            state_path = repo / "autoresearch-state.json"
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "pytest -q",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+            )
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            payload["state"]["current_metric"] = "999"
+            state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = self.run_script(
+                "autoresearch_health_check.py",
+                "--repo",
+                str(repo),
+                "--verify-cmd",
+                "python3 -c pass",
+                "--min-free-mb",
+                "1",
+            )
+            self.assertEqual(result["decision"], "warn")
+            self.assertEqual(result["resume_detail"], "state_tsv_diverged")
+            self.assertTrue(
+                any("diverges from the reconstructed TSV state" in warning for warning in result["warnings"])
+            )
+
     def test_health_check_corrupt_exec_log_still_uses_exec_scratch_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -2723,16 +3307,18 @@ class AutoresearchScriptsTest(unittest.TestCase):
                 "append",
                 "--lessons-path",
                 str(lessons_path),
-                "--kind",
-                "pivot",
                 "--title",
                 "Dispatch v2 is graph-unsafe",
+                "--strategy",
+                "Directly substitute vendor dispatch_v2 in the live graph.",
+                "--outcome",
+                "pivot",
                 "--insight",
                 "Avoid this operator family in the live graph.",
                 "--context",
-                "16-NPU Jamba smoke",
+                "goal=Improve Jamba throughput; scope=moe dispatch; metric=avg_mfu; direction=higher",
                 "--iteration",
-                "77",
+                "run77#77",
             )
             entries = self.run_script(
                 "autoresearch_lessons.py",
@@ -2742,7 +3328,205 @@ class AutoresearchScriptsTest(unittest.TestCase):
             )
             self.assertEqual(len(entries), 1)
             self.assertEqual(entries[0]["title"], "Dispatch v2 is graph-unsafe")
-            self.assertEqual(entries[0]["kind"], "pivot")
+            self.assertEqual(entries[0]["outcome"], "pivot")
+            self.assertEqual(entries[0]["id"], "L-1")
+
+    def test_lessons_list_backs_up_corrupt_file_and_recovers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lessons_path = Path(tmp) / "autoresearch-lessons.md"
+            lessons_path.write_text("this is not a valid lesson file\n", encoding="utf-8")
+
+            entries = self.run_script(
+                "autoresearch_lessons.py",
+                "list",
+                "--lessons-path",
+                str(lessons_path),
+            )
+
+            self.assertEqual(entries, [])
+            backups = sorted(Path(tmp).glob("autoresearch-lessons.md.*.bak"))
+            self.assertEqual(len(backups), 1)
+            self.assertFalse(lessons_path.exists())
+            self.assertIn("this is not a valid lesson file", backups[0].read_text(encoding="utf-8"))
+
+    def test_summary_lesson_is_not_suppressed_across_runs_without_run_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lessons_path = Path(tmp) / "autoresearch-lessons.md"
+            self.run_script(
+                "autoresearch_lessons.py",
+                "append",
+                "--lessons-path",
+                str(lessons_path),
+                "--title",
+                "Previous run summary",
+                "--strategy",
+                "Runtime completion summary",
+                "--outcome",
+                "summary",
+                "--insight",
+                "Previous run ended cleanly.",
+                "--context",
+                "goal=Reduce failures; scope=src/**/*.py; metric=failure count; direction=lower",
+                "--iteration",
+                "2",
+            )
+
+            if str(SCRIPTS_DIR) not in sys.path:
+                sys.path.insert(0, str(SCRIPTS_DIR))
+            from autoresearch_lessons import append_summary_lesson_if_needed
+
+            result = append_summary_lesson_if_needed(
+                lessons_path=lessons_path,
+                state_payload={
+                    "mode": "loop",
+                    "config": {
+                        "goal": "Reduce failures",
+                        "scope": "src/**/*.py",
+                        "metric": "failure count",
+                        "direction": "lower",
+                    },
+                    "state": {
+                        "best_metric": 1,
+                        "best_iteration": 2,
+                        "iteration": 3,
+                        "last_status": "keep",
+                    },
+                },
+                current_iteration=3,
+            )
+
+            self.assertIsNotNone(result)
+            entries = self.run_script(
+                "autoresearch_lessons.py",
+                "list",
+                "--lessons-path",
+                str(lessons_path),
+            )
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[-1]["outcome"], "summary")
+            self.assertEqual(entries[-1]["iteration"], "3")
+
+    def test_record_iteration_extracts_protocol_lesson_for_keep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            state_path = tmpdir / "autoresearch-state.json"
+            lessons_path = tmpdir / "autoresearch-lessons.md"
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "pytest -q",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+            )
+            self.run_script(
+                "autoresearch_record_iteration.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--status",
+                "keep",
+                "--metric",
+                "8",
+                "--commit",
+                "deadbee",
+                "--description",
+                "Chunked dispatch v2 improved the retained metric.",
+            )
+
+            entries = self.run_script(
+                "autoresearch_lessons.py",
+                "list",
+                "--lessons-path",
+                str(lessons_path),
+            )
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["outcome"], "keep")
+            self.assertEqual(entries[0]["iteration"], "1")
+            self.assertTrue(entries[0]["context"].startswith("goal=Reduce failures"))
+
+    def test_runtime_terminal_appends_summary_lesson(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            state_path = tmpdir / "autoresearch-state.json"
+            lessons_path = tmpdir / "autoresearch-lessons.md"
+            fake_codex_path = tmpdir / "fake-codex"
+            self.write_fake_codex(fake_codex_path, body_lines=["exit 0"])
+            self.create_launch_manifest(
+                tmpdir,
+                stop_condition="stop when metric reaches 0",
+            )
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "pytest -q",
+                "--stop-condition",
+                "stop when metric reaches 0",
+                "--baseline-metric",
+                "0",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+            )
+
+            started = self.run_script(
+                "autoresearch_runtime_ctl.py",
+                "start",
+                "--repo",
+                str(tmpdir),
+                "--codex-bin",
+                str(fake_codex_path),
+            )
+            self.assertEqual(started["status"], "running")
+
+            terminal = self.wait_for_runtime_status(tmpdir, {"terminal"})
+            self.assertEqual(terminal["status"], "terminal")
+            self.assertEqual(terminal["reason"], "goal_reached")
+
+            entries = self.run_script(
+                "autoresearch_lessons.py",
+                "list",
+                "--lessons-path",
+                str(lessons_path),
+            )
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["outcome"], "summary")
 
 
 if __name__ == "__main__":

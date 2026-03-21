@@ -27,6 +27,7 @@ EXEC_SCRATCH_ROOT = Path("/tmp/codex-autoresearch-exec")
 LAUNCH_MANIFEST_NAME = "autoresearch-launch.json"
 RUNTIME_STATE_NAME = "autoresearch-runtime.json"
 RUNTIME_LOG_NAME = "autoresearch-runtime.log"
+LESSONS_FILE_NAME = "autoresearch-lessons.md"
 AUTORESEARCH_OWNED_BASENAMES = {
     "research-results.tsv",
     "autoresearch-state.json",
@@ -149,12 +150,26 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def lexical_abspath(path: Path | None = None) -> Path:
+    # Preserve the caller's path spelling (for example /var vs /private/var on macOS)
+    # while still normalizing relative segments into an absolute path.
+    return Path(os.path.abspath(str(path or Path.cwd())))
+
+
 def find_repo_root(start: Path | None = None) -> Path:
-    current = (start or Path.cwd()).resolve()
+    current = lexical_abspath(start)
     for candidate in (current, *current.parents):
         if (candidate / ".git").exists():
             return candidate
     return current
+
+
+def canonical_repo_root(start: Path | None = None) -> Path:
+    return find_repo_root(start).resolve()
+
+
+def has_git_repo(start: Path | None = None) -> bool:
+    return (find_repo_root(start) / ".git").exists()
 
 
 def default_launch_manifest_path(cwd: Path | None = None) -> Path:
@@ -167,6 +182,10 @@ def default_runtime_state_path(cwd: Path | None = None) -> Path:
 
 def default_runtime_log_path(cwd: Path | None = None) -> Path:
     return find_repo_root(cwd) / RUNTIME_LOG_NAME
+
+
+def default_lessons_path(cwd: Path | None = None) -> Path:
+    return find_repo_root(cwd) / LESSONS_FILE_NAME
 
 
 def default_state_path(cwd: Path | None = None) -> Path:
@@ -192,9 +211,26 @@ def is_autoresearch_owned_artifact(path: str | Path) -> bool:
 
 
 def default_exec_state_path(cwd: Path | None = None) -> Path:
-    repo_root = find_repo_root(cwd)
+    # Exec scratch identity should stay stable even if the same repo is accessed
+    # through multiple lexical aliases, so keep the hash canonicalized.
+    repo_root = canonical_repo_root(cwd)
     digest = hashlib.sha256(str(repo_root).encode("utf-8")).hexdigest()[:12]
     return EXEC_SCRATCH_ROOT / digest / "autoresearch-state.exec.json"
+
+
+def prev_archive_path(path: Path) -> Path:
+    if path.suffix:
+        return path.with_name(f"{path.stem}.prev{path.suffix}")
+    return path.with_name(f"{path.name}.prev")
+
+
+def archive_path_to_prev(path: Path) -> Path | None:
+    if not path.exists():
+        return None
+    archive_path = prev_archive_path(path)
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    path.replace(archive_path)
+    return archive_path
 
 
 def resolve_state_path(
@@ -208,7 +244,7 @@ def resolve_state_path(
         candidate = Path(requested_path)
         if candidate.is_absolute() or cwd is None:
             return candidate
-        return (find_repo_root(cwd) / candidate).resolve()
+        return lexical_abspath(find_repo_root(cwd) / candidate)
 
     repo_state_path = default_state_path(cwd)
     if mode == "exec":
@@ -225,11 +261,17 @@ def resolve_state_path(
 
 def resolve_state_path_for_log(
     requested_path: str | None,
-    parsed: ParsedLog | None,
+    parsed: ParsedLog | dict[str, str] | None,
     *,
     cwd: Path | None = None,
 ) -> Path:
-    mode = None if parsed is None else parsed.metadata.get("mode")
+    if isinstance(parsed, ParsedLog):
+        metadata = parsed.metadata
+    elif isinstance(parsed, dict):
+        metadata = parsed
+    else:
+        metadata = {}
+    mode = metadata.get("mode")
     exec_mode = mode == "exec"
     return resolve_state_path(
         requested_path,
@@ -683,6 +725,31 @@ def build_launch_manifest(
         "created_at": utc_now(),
         "updated_at": utc_now(),
     }
+
+
+def synthesize_launch_manifest_from_state(
+    *,
+    launch_path: Path,
+    state_path: Path,
+    note: str = "Synthesized from validated legacy autoresearch state.",
+) -> dict[str, Any]:
+    state_payload = read_state_payload(state_path)
+    config = dict(state_payload.get("config", {}))
+    goal = str(config.get("goal", "")).strip()
+    if not goal:
+        raise AutoresearchError(
+            f"Cannot synthesize a launch manifest from {state_path}: config.goal is missing."
+        )
+    manifest = build_launch_manifest(
+        original_goal=goal,
+        prompt_text=goal,
+        mode=str(state_payload.get("mode", "loop") or "loop"),
+        config=config,
+        resume_seed={"source": "legacy_state"},
+        notes=[note],
+    )
+    write_json_atomic(launch_path, manifest)
+    return manifest
 
 
 def build_runtime_payload(

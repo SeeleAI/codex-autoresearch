@@ -18,6 +18,7 @@ All modes share these status values (see `references/results-logging.md` for ful
 | `pivot` | Strategy abandoned, fundamentally new approach |
 | `search` | Web search performed for external knowledge |
 | `drift` | Metric drifted from expected value during session resume |
+| `split` | Session split triggered to prevent context drift in long runs |
 
 ## Common Response Sections
 
@@ -191,8 +192,7 @@ Exit codes: 0 = improved, 1 = no improvement, 2 = hard blocker.
 ## Logging Rules
 
 - TSV headers must be written exactly once.
-- Timestamps should use UTC.
+- When helper-managed artifacts include timestamps (for example lessons entries or runtime/state metadata), they should use UTC.
 - File paths should be repo-relative inside artifacts.
 - Final summaries should reference every artifact created.
-- Health check warnings use `[HEALTH]` prefix in descriptions.
 - Parallel workers use `[PARALLEL worker-{id}]` prefix.

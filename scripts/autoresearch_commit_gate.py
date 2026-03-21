@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
 from autoresearch_helpers import AutoresearchError, is_autoresearch_owned_artifact
@@ -22,23 +24,52 @@ def git_lines(repo: Path, *args: str) -> list[str]:
     return [line.rstrip() for line in completed.stdout.splitlines() if line.strip()]
 
 
+def parse_scope_patterns(scope_text: str | None) -> list[str]:
+    if not scope_text:
+        return []
+    return [token for token in re.split(r"[\s,]+", scope_text.strip()) if token]
+
+
+def path_is_in_scope(path: str, patterns: list[str]) -> bool:
+    if not patterns:
+        return False
+    normalized = path.replace("\\", "/")
+    candidate = PurePosixPath(normalized)
+    for pattern in patterns:
+        pattern = pattern.strip()
+        if not pattern:
+            continue
+        variants = {pattern.replace("\\", "/").lstrip("./")}
+        while True:
+            expanded = {variant.replace("**/", "") for variant in variants if "**/" in variant}
+            expanded -= variants
+            if not expanded:
+                break
+            variants |= expanded
+        if any(candidate.match(variant) for variant in variants):
+            return True
+    return False
+
+
 def evaluate_commit_gate(
     *,
     repo: Path,
     phase: str,
     rollback_policy: str | None,
     destructive_approved: bool,
+    scope_text: str | None = None,
 ) -> dict[str, Any]:
     status_lines = git_lines(repo, "status", "--porcelain")
     staged_files = git_lines(repo, "diff", "--cached", "--name-only")
     unexpected_worktree = []
     staged_artifacts = []
+    scope_patterns = parse_scope_patterns(scope_text)
 
     for line in status_lines:
         raw_path = line[3:] if len(line) > 3 else line
         if " -> " in raw_path:
             raw_path = raw_path.split(" -> ", 1)[1]
-        if not is_autoresearch_owned_artifact(raw_path):
+        if not is_autoresearch_owned_artifact(raw_path) and not path_is_in_scope(raw_path, scope_patterns):
             unexpected_worktree.append(raw_path)
 
     for path in staged_files:
@@ -47,8 +78,11 @@ def evaluate_commit_gate(
 
     blockers: list[str] = []
     warnings: list[str] = []
-    if phase == "prelaunch" and unexpected_worktree:
-        blockers.append("unexpected worktree changes before launch: " + ", ".join(sorted(unexpected_worktree)))
+    if phase in {"prelaunch", "precommit"} and unexpected_worktree:
+        label = "before launch" if phase == "prelaunch" else "before commit"
+        blockers.append(
+            f"unexpected worktree changes {label}: " + ", ".join(sorted(unexpected_worktree))
+        )
     elif unexpected_worktree:
         warnings.append("unexpected worktree changes: " + ", ".join(sorted(unexpected_worktree)))
 
@@ -68,6 +102,7 @@ def evaluate_commit_gate(
         "phase": phase,
         "rollback_policy": rollback_policy or "",
         "destructive_approved": destructive_approved,
+        "scope_patterns": scope_patterns,
         "unexpected_worktree": sorted(unexpected_worktree),
         "staged_artifacts": sorted(staged_artifacts),
         "warnings": warnings,
@@ -83,6 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--phase", choices=["prelaunch", "precommit", "rollback"], default="precommit")
     parser.add_argument("--rollback-policy")
     parser.add_argument("--destructive-approved", action="store_true")
+    parser.add_argument("--scope")
     return parser
 
 
@@ -94,6 +130,7 @@ def main() -> int:
         phase=args.phase,
         rollback_policy=args.rollback_policy,
         destructive_approved=args.destructive_approved,
+        scope_text=args.scope,
     )
     print(json.dumps(output, indent=2, sort_keys=True))
     return 0

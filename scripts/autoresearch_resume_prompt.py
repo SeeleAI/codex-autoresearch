@@ -8,6 +8,7 @@ from autoresearch_helpers import (
     AutoresearchError,
     default_launch_manifest_path,
     default_runtime_state_path,
+    synthesize_launch_manifest_from_state,
     read_launch_manifest,
 )
 from autoresearch_launch_gate import evaluate_launch_context
@@ -88,7 +89,6 @@ def main() -> int:
     args = parser.parse_args()
 
     launch_path = Path(args.launch_path)
-    launch_manifest = read_launch_manifest(launch_path)
     context = evaluate_launch_context(
         results_path=Path(args.results_path),
         state_path_arg=args.state_path,
@@ -100,6 +100,14 @@ def main() -> int:
         raise AutoresearchError(
             f"Cannot generate a runtime prompt for decision={context['decision']}: {context['reason']}"
         )
+    if not launch_path.exists():
+        if context["reason"] != "legacy_resume":
+            raise AutoresearchError(f"Missing JSON file: {launch_path}")
+        synthesize_launch_manifest_from_state(
+            launch_path=launch_path,
+            state_path=Path(context["state_path"]),
+        )
+    launch_manifest = read_launch_manifest(launch_path)
 
     print(
         build_runtime_prompt(

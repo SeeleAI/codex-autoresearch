@@ -2,6 +2,19 @@
 
 Cross-run learning system. Extracts structured insights from completed iterations and persists them so future runs start smarter.
 
+The executable companion is:
+
+```bash
+python3 <skill-root>/scripts/autoresearch_lessons.py
+```
+
+The protocol-aligned runtime wiring is:
+
+- `autoresearch_record_iteration.py` appends lessons automatically after every `keep` and every `pivot` in interactive modes.
+- `autoresearch_select_parallel_batch.py` appends the same interactive keep lesson when a parallel batch selects a winning worker and records a `keep` main row.
+- `autoresearch_runtime_ctl.py` appends the completion summary lesson when the managed runtime reaches a terminal decision and no lesson has been written in the last 5 iterations of the same run. If no run tag is available, it only suppresses an exact duplicate summary for the current iteration.
+- `exec` mode reads lessons for context but never writes or mutates the lessons file.
+
 ## Lessons File
 
 Default filename:
@@ -32,9 +45,9 @@ Each lesson is a structured entry:
 
 Lesson extraction happens at specific points in the iteration cycle:
 
-- **After a KEEP decision (Phase 7) and before Log (Phase 8):** Extract a positive lesson.
-- **After a PIVOT decision (Phase 7) and before Log (Phase 8):** Extract a strategic lesson.
-- **At run completion (when Phase 9 exits):** Extract a summary lesson if none was extracted in the last 5 iterations.
+- **After `autoresearch_record_iteration.py` persists a KEEP row and JSON state:** Extract a positive lesson.
+- **After `autoresearch_record_iteration.py` persists a PIVOT row and JSON state:** Extract a strategic lesson.
+- **At run completion (when the managed runtime reaches a terminal decision):** Extract a summary lesson if none was extracted in the last 5 iterations of the same run. If there is no run tag, suppress only an exact duplicate for the current iteration.
 
 ### After Every Kept Iteration
 
@@ -95,9 +108,10 @@ Lessons older than 14 days receive reduced weight during hypothesis selection. L
 
 - Create the lessons file at the end of the first iteration that produces a keep or pivot.
 - Append after each qualifying event (keep, pivot, run completion).
+- The file format on disk must exactly match the lesson structure above; `autoresearch_lessons.py list` is the canonical parser for that format.
 - Never commit the lessons file.
 - Use the same run tag as the results log for cross-referencing.
-- If the lessons file is corrupted or unparseable, rename it with a `.bak` suffix and start fresh.
+- If the lessons file is corrupted or unparseable, the canonical helper must rename it with a `.bak` suffix and start fresh.
 
 ## Integration Points
 

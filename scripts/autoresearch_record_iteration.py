@@ -17,6 +17,7 @@ from autoresearch_helpers import (
     resolve_state_path_for_log,
     write_json_atomic,
 )
+from autoresearch_lessons import append_iteration_lesson, lessons_path_from_results
 
 
 STATUSES = ["keep", "discard", "crash", "no-op", "blocked", "drift", "refine", "pivot", "search", "split"]
@@ -90,6 +91,14 @@ def main() -> int:
         next_iteration=next_iteration,
     )
     write_json_atomic(state_path, final_payload)
+
+    append_iteration_lesson(
+        lessons_path=lessons_path_from_results(results_path),
+        state_payload=final_payload,
+        status=args.status,
+        description=args.description,
+        iteration=next_iteration,
+    )
 
     print(
         json.dumps(

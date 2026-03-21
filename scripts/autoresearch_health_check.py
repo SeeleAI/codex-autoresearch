@@ -11,12 +11,11 @@ from typing import Any
 
 from autoresearch_helpers import (
     AutoresearchError,
+    has_git_repo,
     is_autoresearch_owned_artifact,
-    parse_log_metadata,
-    parse_results_log,
-    read_state_payload,
-    resolve_state_path,
+    lexical_abspath,
 )
+from autoresearch_resume_check import evaluate_resume_state
 
 
 def git_status(repo: Path) -> list[str]:
@@ -63,47 +62,37 @@ def run_health_check(
     elif free_mb < max(min_free_mb * 2, 1000):
         warnings.append(f"disk free space is getting low: {free_mb}MB")
 
-    if results_path.exists():
-        try:
-            parsed = parse_results_log(results_path)
-            metadata = parsed.metadata
-        except AutoresearchError as exc:
-            parsed = None
-            metadata = parse_log_metadata(results_path)
-            blockers.append(f"results log is corrupt: {exc}")
-    else:
-        parsed = None
-        metadata = {}
-
-    log_mode = metadata.get("mode")
-    exec_mode = log_mode == "exec"
-    state_path = resolve_state_path(
-        state_path_arg,
-        mode="exec" if exec_mode else None,
-        cwd=repo,
-        allow_exec_scratch_fallback=exec_mode,
+    resume = evaluate_resume_state(
+        results_path=results_path,
+        state_path_arg=state_path_arg,
+        write_repaired_state=False,
     )
+    state_path = Path(str(resume["state_path"]))
 
-    if not results_path.exists() and state_path.exists():
+    if not bool(resume["has_results"]) and bool(resume["has_state"]):
         blockers.append("results log missing while state JSON exists; cannot track progress")
-    elif state_path.exists():
-        try:
-            read_state_payload(state_path)
-        except AutoresearchError as exc:
-            blockers.append(f"state JSON is corrupt: {exc}")
-    elif results_path.exists():
-        warnings.append("results log exists without state JSON; resume would need TSV fallback")
+    elif str(resume["detail"]) == "state_without_reconstructable_tsv":
+        blockers.append("results log is corrupt or unreconstructable; resume helper requires manual confirmation")
+    elif str(resume["detail"]) == "unrecoverable_artifacts":
+        blockers.extend(str(reason) for reason in resume["reasons"])
+    elif str(resume["detail"]) == "state_tsv_diverged":
+        warnings.append("state JSON diverges from the reconstructed TSV state; repair or mini-resume required")
+    elif str(resume["detail"]) == "invalid_state_json":
+        warnings.append("state JSON needs confirmation or repair, but TSV reconstruction is available")
+    elif resume["decision"] == "tsv_fallback":
+        warnings.append("results log exists without a trustworthy JSON state; resume would use TSV fallback")
 
-    dirty_lines = git_status(repo)
-    unexpected = []
-    for line in dirty_lines:
-        path = line[3:] if len(line) > 3 else line
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        if not is_autoresearch_owned_artifact(path):
-            unexpected.append(path)
-    if unexpected:
-        warnings.append("unexpected worktree changes: " + ", ".join(sorted(unexpected)))
+    if has_git_repo(repo):
+        dirty_lines = git_status(repo)
+        unexpected = []
+        for line in dirty_lines:
+            path = line[3:] if len(line) > 3 else line
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if not is_autoresearch_owned_artifact(path):
+                unexpected.append(path)
+        if unexpected:
+            warnings.append("unexpected worktree changes: " + ", ".join(sorted(unexpected)))
 
     if not verify_command_exists(verify_command):
         blockers.append(f"verify command is not executable: {verify_command}")
@@ -121,9 +110,15 @@ def run_health_check(
         "free_mb": free_mb,
         "results_path": str(results_path),
         "state_path": str(state_path),
-        "has_results": results_path.exists(),
-        "has_state": state_path.exists(),
-        "main_rows": len(parsed.main_rows) if parsed is not None else 0,
+        "has_results": bool(resume["has_results"]),
+        "has_state": bool(resume["has_state"]),
+        "main_rows": (
+            int(resume["tsv_summary"]["main_rows"])
+            if isinstance(resume.get("tsv_summary"), dict)
+            else 0
+        ),
+        "resume_decision": resume["decision"],
+        "resume_detail": resume["detail"],
     }
 
 
@@ -142,13 +137,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    repo = Path(args.repo).resolve()
+    repo = lexical_abspath(Path(args.repo))
     results_path = Path(args.results_path)
     if not results_path.is_absolute():
         results_path = repo / results_path
     output = run_health_check(
         repo=repo,
-        results_path=results_path.resolve(),
+        results_path=lexical_abspath(results_path),
         state_path_arg=args.state_path,
         verify_command=args.verify_cmd,
         min_free_mb=args.min_free_mb,
