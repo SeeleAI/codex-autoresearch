@@ -514,14 +514,14 @@ iteration  commit   metric  delta   status    description
 - `python3 <skill-root>/scripts/autoresearch_lessons.py`
 - `python3 <skill-root>/scripts/autoresearch_supervisor_status.py`
 
-Public human-facing usage now stays on a single entrypoint: **`$codex-autoresearch`**.
+사람 사용자를 위한 공개 진입점은 이제 **`$codex-autoresearch`** 하나뿐입니다.
 
-- First interactive run: describe the goal naturally, answer the confirmation questions, then reply `go`
-- After `go`, Codex writes `autoresearch-launch.json` and starts the detached runtime controller automatically
-- Later `status`, `stop`, and `resume` requests should still go through the same `$codex-autoresearch`
-- `Mode: exec` remains the advanced / CI path
+- 첫 대화형 실행에서는 목표를 자연스럽게 설명하고, 확인 질문에 답한 뒤 `go`라고 말하면 됩니다
+- `go` 이후 Codex는 `autoresearch-launch.json` 을 기록하고 분리된 실행 컨트롤러를 자동으로 시작합니다
+- 이후 `status`, `stop`, `resume` 요청도 계속 같은 `$codex-autoresearch` 를 통해 처리합니다
+- `Mode: exec` 는 CI 또는 완전히 지정된 자동화를 위한 고급 경로로 유지됩니다
 
-Advanced backend commands remain available for scripting or runtime debugging:
+스크립팅이나 실행 계층 디버깅을 위한 직접 제어 명령도 계속 사용할 수 있습니다.
 
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py status --repo <repo>`
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py stop --repo <repo>`
@@ -533,7 +533,7 @@ Advanced backend commands remain available for scripting or runtime debugging:
 
 | 우려 사항 | 처리 방식 |
 |-----------|-----------|
-| 더티 워크트리 | 루프가 시작을 거부. `plan` 모드 또는 클린 브랜치를 제안 |
+| 더티 워크트리 | runtime 사전 점검이 scope 밖 변경이 정리되거나 격리될 때까지 시작과 재시작을 차단 |
 | 실패한 변경 | 시작 전에 승인된 롤백 전략을 사용합니다. 격리된 실험 브랜치/워크트리에서 승인된 경우 `git reset --hard HEAD~1`, 그 외에는 `git revert --no-edit HEAD`를 사용합니다. 결과 로그가 감사 추적입니다 |
 | Guard 실패 | 최대 2회 재조정 후 롤백 |
 | 구문 오류 | 즉시 수정. 반복으로 카운트하지 않음 |
@@ -629,7 +629,7 @@ codex-autoresearch/
 
 **몇 번 반복하나요?** 작업에 따라 다릅니다. 타겟 수정은 5회, 탐색적인 것은 10-20회, 야간 실행은 무제한입니다.
 
-**실행 간에 학습하나요?** 예. `exec` 를 제외한 각 반복 실행 후 교훈이 추출되고, 다음 실행 시작 시 참조됩니다. 교훈 파일은 세션 간에 유지됩니다. `exec` 는 기존 교훈만 읽고 새 교훈은 쓰지 않습니다.
+**실행 간에 학습하나요?** 예. 교훈은 각 `keep`, 각 `pivot`, 그리고 최근 교훈이 없는 상태로 runtime 이 종료될 때 추출됩니다. 교훈 파일은 세션 간에 유지됩니다. `exec` 는 기존 교훈만 읽고 새 교훈은 쓰지 않습니다.
 
 **중단 후 재개할 수 있나요?** 예. 다음 호출 시 이전 실행을 감지하고 마지막 일관 상태에서 재개합니다.
 

@@ -515,14 +515,14 @@ Ces artefacts d'etat sont geres par les helper scripts fournis avec le skill. Ap
 - `python3 <skill-root>/scripts/autoresearch_lessons.py`
 - `python3 <skill-root>/scripts/autoresearch_supervisor_status.py`
 
-Public human-facing usage now stays on a single entrypoint: **`$codex-autoresearch`**.
+Pour les utilisateurs humains, il n'y a maintenant plus qu'un seul point d'entree principal : **`$codex-autoresearch`**.
 
-- First interactive run: describe the goal naturally, answer the confirmation questions, then reply `go`
-- After `go`, Codex writes `autoresearch-launch.json` and starts the detached runtime controller automatically
-- Later `status`, `stop`, and `resume` requests should still go through the same `$codex-autoresearch`
-- `Mode: exec` remains the advanced / CI path
+- Lors du premier lancement interactif, decrivez naturellement l'objectif, repondez aux questions de confirmation, puis repondez `go`
+- Apres `go`, Codex ecrit `autoresearch-launch.json` et demarre automatiquement le controleur d'execution detache
+- Les demandes ulterieures comme `status`, `stop` ou `resume` passent toujours par le meme `$codex-autoresearch`
+- `Mode: exec` reste la voie avancee pour le CI ou l'automatisation entierement specifiee
 
-Advanced backend commands remain available for scripting or runtime debugging:
+Les commandes directes de pilotage restent disponibles pour le scripting ou le debug de l'execution :
 
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py status --repo <repo>`
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py stop --repo <repo>`
@@ -534,7 +534,7 @@ Advanced backend commands remain available for scripting or runtime debugging:
 
 | Preoccupation | Traitement |
 |---------------|------------|
-| Arbre de travail sale | La boucle refuse de demarrer ; suggere le mode `plan` ou une branche propre |
+| Arbre de travail sale | Le preflight runtime bloque le lancement ou le relancement tant que les changements hors scope ne sont pas nettoyes ou isoles |
 | Changement echoue | Utilise la strategie de rollback approuvee avant le lancement : `git reset --hard HEAD~1` seulement dans une branche/worktree d'experience isolee et approuvee, sinon `git revert --no-edit HEAD` ; le journal des resultats reste la trace d'audit |
 | Echec du Guard | Jusqu'a 2 tentatives de correction, puis annulation |
 | Erreur de syntaxe | Correction automatique immediate, ne compte pas comme iteration |
@@ -630,7 +630,7 @@ codex-autoresearch/
 
 **Combien d'iterations ?** Cela depend de la tache. 5 pour les corrections ciblees, 10-20 pour l'exploration, illimite pour les executions de nuit.
 
-**Apprend-il d'une execution a l'autre ?** Oui. Les lecons sont extraites apres chaque execution iterative sauf `exec` et consultees au demarrage de la suivante. Le fichier de lecons persiste entre les sessions ; `exec` ne fait que lire les lecons existantes.
+**Apprend-il d'une execution a l'autre ?** Oui. Les lecons sont extraites apres chaque `keep`, apres chaque `pivot` et a la fin de la runtime lorsqu'aucune lecon recente n'existe. Le fichier de lecons persiste entre les sessions ; `exec` ne fait que lire les lecons existantes.
 
 **Peut-il reprendre apres une interruption ?** Oui. Lors de l'invocation suivante, il detecte l'execution precedente et reprend a partir du dernier etat coherent.
 

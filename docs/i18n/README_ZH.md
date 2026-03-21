@@ -517,11 +517,11 @@ iteration  commit   metric  delta   status    description
 对人类用户来说，现在只保留一个主要入口：**`$codex-autoresearch`**。
 
 - 首次交互运行：自然描述目标，回答确认问题，然后回复 `go`
-- 回复 `go` 后，Codex 会自动写入 `autoresearch-launch.json` 并启动后台 runtime controller
+- 回复 `go` 后，Codex 会自动写入 `autoresearch-launch.json` 并启动分离的运行控制器
 - 之后如果想看状态、停止、恢复，仍然通过 `$codex-autoresearch` 这个 skill 来做
 - `Mode: exec` 仍然保留给 CI / 高级自动化
 
-如果你在做后端自动化或调试 runtime，也可以直接调用：
+如果你在做后端自动化或调试运行控制面，也可以直接调用：
 
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py status --repo <repo>`
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py stop --repo <repo>`
@@ -533,7 +533,7 @@ iteration  commit   metric  delta   status    description
 
 | 问题 | 处理方式 |
 |------|---------|
-| 脏工作树 | 拒绝启动；建议使用 plan 模式或干净分支 |
+| 脏工作树 | runtime 预检会阻止启动或重启，直到 scope 外变更被清理或隔离 |
 | 失败的更改 | 使用启动前确认过的回滚策略：隔离实验分支/工作树中可用已批准的 `git reset --hard HEAD~1`，否则使用 `git revert --no-edit HEAD`；结果日志仍是审计记录 |
 | 守护失败 | 最多 2 次修复尝试后丢弃 |
 | 语法错误 | 立即自动修复，不计入迭代 |
@@ -629,7 +629,7 @@ codex-autoresearch/
 
 **迭代多少次？** 取决于任务。定向修复 5 次，探索性 10-20 次，过夜运行不设限。
 
-**它会跨运行学习吗？** 是的。除 `exec` 外，每次迭代运行后都会提取经验，并在下次运行开始时参考。经验文件跨会话持久保存；`exec` 只读取已有经验，不写入新经验。
+**它会跨运行学习吗？** 是的。每次 `keep`、每次 `pivot`，以及 runtime 结束且最近 5 次迭代没有新经验时，都会提取经验。经验文件跨会话持久保存；`exec` 只读取已有经验，不写入新经验。
 
 **中断后能恢复吗？** 是的。下次调用时，它会检测先前的运行并从最后一致的状态恢复。
 

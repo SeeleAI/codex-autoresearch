@@ -515,14 +515,14 @@ iteration  commit   metric  delta   status    description
 - `python3 <skill-root>/scripts/autoresearch_lessons.py`
 - `python3 <skill-root>/scripts/autoresearch_supervisor_status.py`
 
-Public human-facing usage now stays on a single entrypoint: **`$codex-autoresearch`**.
+Для человека теперь остается только одна основная точка входа: **`$codex-autoresearch`**.
 
-- First interactive run: describe the goal naturally, answer the confirmation questions, then reply `go`
-- After `go`, Codex writes `autoresearch-launch.json` and starts the detached runtime controller automatically
-- Later `status`, `stop`, and `resume` requests should still go through the same `$codex-autoresearch`
-- `Mode: exec` remains the advanced / CI path
+- В первом интерактивном запуске опишите цель естественным языком, ответьте на вопросы подтверждения, затем напишите `go`
+- После `go` Codex записывает `autoresearch-launch.json` и автоматически запускает отсоединенный контроллер выполнения
+- Последующие запросы `status`, `stop` и `resume` по-прежнему идут через тот же `$codex-autoresearch`
+- `Mode: exec` остается продвинутым путем для CI и полностью заданной автоматизации
 
-Advanced backend commands remain available for scripting or runtime debugging:
+Прямые команды управления по-прежнему доступны для скриптов и отладки выполнения:
 
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py status --repo <repo>`
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py stop --repo <repo>`
@@ -534,7 +534,7 @@ Advanced backend commands remain available for scripting or runtime debugging:
 
 | Ситуация | Обработка |
 |----------|-----------|
-| Грязное рабочее дерево | Цикл отказывается стартовать; предлагает режим `plan` или чистую ветку |
+| Грязное рабочее дерево | Предпусковая проверка runtime блокирует запуск и перезапуск, пока изменения вне scope не будут очищены или изолированы |
 | Неудачное изменение | Используется стратегия отката, согласованная до запуска: `git reset --hard HEAD~1` только в изолированной экспериментальной ветке/worktree с одобрением; иначе используется `git revert --no-edit HEAD`; журнал результатов остаётся аудиторским следом |
 | Падение guard | До 2 попыток доработки, затем откат |
 | Синтаксическая ошибка | Немедленное исправление, не считается итерацией |
@@ -630,7 +630,7 @@ codex-autoresearch/
 
 **Сколько итераций нужно?** Зависит от задачи. 5 для точечных исправлений, 10-20 для исследования, без ограничений для ночных запусков.
 
-**Обучается ли между запусками?** Да. Уроки извлекаются после каждого итеративного запуска, кроме `exec`, и учитываются в начале следующего. Файл уроков сохраняется между сессиями; `exec` только читает уже существующие уроки.
+**Обучается ли между запусками?** Да. Уроки извлекаются после каждого `keep`, после каждого `pivot` и при завершении runtime, если недавнего урока еще нет. Файл уроков сохраняется между сессиями; `exec` только читает уже существующие уроки.
 
 **Может ли возобновить работу после прерывания?** Да. При следующем вызове он обнаруживает предыдущий запуск и возобновляет с последнего согласованного состояния.
 

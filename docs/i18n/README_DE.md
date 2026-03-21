@@ -514,14 +514,14 @@ Diese Zustandsartefakte werden von den mit dem Skill gebuendelten Helper-Skripte
 - `python3 <skill-root>/scripts/autoresearch_lessons.py`
 - `python3 <skill-root>/scripts/autoresearch_supervisor_status.py`
 
-Public human-facing usage now stays on a single entrypoint: **`$codex-autoresearch`**.
+Fuer Menschen gibt es jetzt nur noch einen einzigen Haupteinstieg: **`$codex-autoresearch`**.
 
-- First interactive run: describe the goal naturally, answer the confirmation questions, then reply `go`
-- After `go`, Codex writes `autoresearch-launch.json` and starts the detached runtime controller automatically
-- Later `status`, `stop`, and `resume` requests should still go through the same `$codex-autoresearch`
-- `Mode: exec` remains the advanced / CI path
+- Beim ersten interaktiven Lauf beschreiben Sie das Ziel natuerlich, beantworten die Rueckfragen und antworten dann mit `go`
+- Nach `go` schreibt Codex automatisch `autoresearch-launch.json` und startet die entkoppelte Laufzeitsteuerung
+- Spaetere Anfragen wie `status`, `stop` oder `resume` laufen weiterhin ueber dasselbe `$codex-autoresearch`
+- `Mode: exec` bleibt der erweiterte Pfad fuer CI und voll spezifizierte Automatisierung
 
-Advanced backend commands remain available for scripting or runtime debugging:
+Direkte Steuerbefehle bleiben fuer Skripting oder das Debugging der Laufzeit verfuegbar:
 
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py status --repo <repo>`
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py stop --repo <repo>`
@@ -533,7 +533,7 @@ Advanced backend commands remain available for scripting or runtime debugging:
 
 | Bedenken | Behandlung |
 |----------|------------|
-| Unsauberer Arbeitsbaum | Die Schleife verweigert den Start; schlaegt den Modus `plan` oder einen sauberen Branch vor |
+| Unsauberer Arbeitsbaum | Die Laufzeit-Vorpruefung blockiert Start oder Relaunch, bis scope-fremde Aenderungen bereinigt oder isoliert sind |
 | Fehlgeschlagene Aenderung | Verwendet die vor dem Start genehmigte Rollback-Strategie: `git reset --hard HEAD~1` nur in einem isolierten Experiment-Branch/Worktree mit Genehmigung, sonst `git revert --no-edit HEAD`; das Ergebnisprotokoll bleibt der Audit-Trail |
 | Guard-Fehlschlag | Bis zu 2 Ueberarbeitungsversuche, dann Zuruecksetzen |
 | Syntaxfehler | Sofortige automatische Korrektur, zaehlt nicht als Iteration |
@@ -629,7 +629,7 @@ codex-autoresearch/
 
 **Wie viele Iterationen?** Haengt von der Aufgabe ab. 5 fuer gezielte Korrekturen, 10-20 fuer Exploration, unbegrenzt fuer Nachtlaeufe.
 
-**Lernt es ueber Laeufe hinweg?** Ja. Nach jedem iterativen Lauf ausser `exec` werden Erkenntnisse extrahiert und zu Beginn des naechsten Laufs herangezogen. Die Erkenntnisdatei bleibt ueber Sitzungen hinweg erhalten; `exec` liest nur vorhandene Erkenntnisse.
+**Lernt es ueber Laeufe hinweg?** Ja. Erkenntnisse werden nach jedem `keep`, nach jedem `pivot` und bei Runtime-Abschluss ohne aktuelle Erkenntnis extrahiert. Die Erkenntnisdatei bleibt ueber Sitzungen hinweg erhalten; `exec` liest nur vorhandene Erkenntnisse.
 
 **Kann es nach einer Unterbrechung fortfahren?** Ja. Beim naechsten Aufruf erkennt es den vorherigen Lauf und setzt vom letzten konsistenten Zustand fort.
 

@@ -514,14 +514,14 @@ iteration  commit   metric  delta   status    description
 - `python3 <skill-root>/scripts/autoresearch_lessons.py`
 - `python3 <skill-root>/scripts/autoresearch_supervisor_status.py`
 
-Public human-facing usage now stays on a single entrypoint: **`$codex-autoresearch`**.
+人間向けの公開入口は、いまは **`$codex-autoresearch`** ひとつだけです。
 
-- First interactive run: describe the goal naturally, answer the confirmation questions, then reply `go`
-- After `go`, Codex writes `autoresearch-launch.json` and starts the detached runtime controller automatically
-- Later `status`, `stop`, and `resume` requests should still go through the same `$codex-autoresearch`
-- `Mode: exec` remains the advanced / CI path
+- 最初の対話実行では、目標を自然に説明し、確認の質問に答え、そのあと `go` と返します
+- `go` のあと、Codex は `autoresearch-launch.json` を書き込み、切り離された実行コントローラを自動で起動します
+- その後の `status`、`stop`、`resume` も同じ `$codex-autoresearch` から行います
+- `Mode: exec` は、CI や完全に指定された自動化向けの上級パスとして残ります
 
-Advanced backend commands remain available for scripting or runtime debugging:
+スクリプト実行や実行系のデバッグ向けに、直接制御コマンドも利用できます。
 
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py status --repo <repo>`
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py stop --repo <repo>`
@@ -533,7 +533,7 @@ Advanced backend commands remain available for scripting or runtime debugging:
 
 | 懸念事項 | 対処方法 |
 |----------|----------|
-| ダーティなワークツリー | ループは開始を拒否。`plan` モードまたはクリーンなブランチを提案 |
+| ダーティなワークツリー | runtime の事前チェックが、スコープ外変更をクリーンアップまたは隔離するまで起動と再起動をブロック |
 | 失敗した変更 | 起動前に承認されたロールバック戦略を使用。隔離された実験ブランチ/ワークツリーで承認済みなら `git reset --hard HEAD~1`、それ以外は `git revert --no-edit HEAD`。結果ログが監査証跡 |
 | Guard の失敗 | 最大2回の再調整後にロールバック |
 | 構文エラー | 即座に修正。反復としてカウントしない |
@@ -629,7 +629,7 @@ codex-autoresearch/
 
 **何回反復する？** タスクによります。的を絞った修正は 5 回、探索的なものは 10-20 回、一晩の実行は無制限です。
 
-**実行間で学習する？** はい。`exec` を除く各反復実行後に教訓が抽出され、次回の実行開始時に参照されます。教訓ファイルはセッション間で保持されます。`exec` は既存の教訓を読むだけで、新しい教訓は書き込みません。
+**実行間で学習する？** はい。教訓は各 `keep`、各 `pivot`、そして最近の教訓がないまま runtime が終了した時に抽出されます。教訓ファイルはセッション間で保持されます。`exec` は既存の教訓を読むだけで、新しい教訓は書き込みません。
 
 **中断後に再開できる？** はい。次回の呼び出し時に、以前の実行を検出し、最後の整合状態から再開します。
 

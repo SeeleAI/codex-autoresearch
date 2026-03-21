@@ -514,14 +514,14 @@ Esses artefatos de estado sao mantidos pelos helper scripts empacotados com o sk
 - `python3 <skill-root>/scripts/autoresearch_lessons.py`
 - `python3 <skill-root>/scripts/autoresearch_supervisor_status.py`
 
-Public human-facing usage now stays on a single entrypoint: **`$codex-autoresearch`**.
+Para usuarios humanos, agora existe apenas uma entrada principal: **`$codex-autoresearch`**.
 
-- First interactive run: describe the goal naturally, answer the confirmation questions, then reply `go`
-- After `go`, Codex writes `autoresearch-launch.json` and starts the detached runtime controller automatically
-- Later `status`, `stop`, and `resume` requests should still go through the same `$codex-autoresearch`
-- `Mode: exec` remains the advanced / CI path
+- Na primeira execucao interativa, descreva o objetivo naturalmente, responda as perguntas de confirmacao e depois diga `go`
+- Depois de `go`, o Codex grava `autoresearch-launch.json` e inicia automaticamente o controlador de execucao desacoplado
+- Pedidos posteriores de `status`, `stop` ou `resume` continuam passando pelo mesmo `$codex-autoresearch`
+- `Mode: exec` continua sendo o caminho avancado para CI ou automacao totalmente especificada
 
-Advanced backend commands remain available for scripting or runtime debugging:
+Os comandos diretos de controle continuam disponiveis para scripting ou depuracao da execucao:
 
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py status --repo <repo>`
 - `python3 <skill-root>/scripts/autoresearch_runtime_ctl.py stop --repo <repo>`
@@ -533,7 +533,7 @@ Advanced backend commands remain available for scripting or runtime debugging:
 
 | Preocupacao | Como e tratada |
 |-------------|----------------|
-| Diretorio de trabalho sujo | O loop se recusa a iniciar; sugere modo `plan` ou branch limpa |
+| Diretorio de trabalho sujo | O preflight do runtime bloqueia inicio ou relancamento ate que mudancas fora do escopo sejam limpas ou isoladas |
 | Alteracao com falha | Usa a estrategia de rollback aprovada antes do inicio: `git reset --hard HEAD~1` apenas em branch/worktree experimental isolado e aprovado; caso contrario usa `git revert --no-edit HEAD`; o registro de resultados continua sendo a trilha de auditoria |
 | Falha do Guard | Ate 2 tentativas de reajuste, depois reverte |
 | Erro de sintaxe | Correcao imediata, nao conta como iteracao |
@@ -629,7 +629,7 @@ codex-autoresearch/
 
 **Quantas iteracoes?** Depende da tarefa. 5 para correcoes direcionadas, 10-20 para exploracao, ilimitadas para execucoes noturnas.
 
-**Ele aprende entre execucoes?** Sim. As licoes sao extraidas apos cada execucao iterativa, exceto `exec`, e consultadas no inicio da proxima. O arquivo de licoes persiste entre sessoes; `exec` apenas le as licoes existentes.
+**Ele aprende entre execucoes?** Sim. As licoes sao extraidas apos cada `keep`, apos cada `pivot` e no fim da runtime quando nao existe licao recente. O arquivo de licoes persiste entre sessoes; `exec` apenas le as licoes existentes.
 
 **Pode retomar apos uma interrupcao?** Sim. Na proxima invocacao, detecta a execucao anterior e retoma do ultimo estado consistente.
 
