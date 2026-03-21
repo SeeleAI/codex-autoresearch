@@ -13,6 +13,7 @@ from typing import Any
 
 from autoresearch_helpers import (
     AutoresearchError,
+    archive_path_to_prev,
     build_launch_manifest,
     build_runtime_payload,
     default_launch_manifest_path,
@@ -22,6 +23,7 @@ from autoresearch_helpers import (
     read_state_payload,
     read_launch_manifest,
     read_runtime_payload,
+    resolve_state_path,
     resolve_state_path_for_log,
     synthesize_launch_manifest_from_state,
     utc_now,
@@ -245,6 +247,28 @@ def create_launch_manifest(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def archive_interactive_fresh_start_artifacts(
+    *,
+    repo: Path,
+    results_path: Path,
+    state_path_arg: str | None,
+    mode: str,
+) -> list[str]:
+    if mode == "exec":
+        return []
+
+    archived: list[str] = []
+    archived_results = archive_path_to_prev(results_path)
+    if archived_results is not None:
+        archived.append(str(archived_results))
+
+    state_path = resolve_state_path(state_path_arg, mode=mode, cwd=repo)
+    archived_state = archive_path_to_prev(state_path)
+    if archived_state is not None:
+        archived.append(str(archived_state))
+    return archived
+
+
 def evaluate_runtime_preflight(
     *,
     repo: Path,
@@ -412,9 +436,20 @@ def start_runtime(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def launch_and_start_runtime(args: argparse.Namespace) -> dict[str, Any]:
+    archived_paths: list[str] = []
+    if args.fresh_start:
+        repo = resolve_repo_path(args.repo)
+        results_path = resolve_repo_relative(repo, args.results_path, repo / DEFAULT_RESULTS_PATH)
+        archived_paths = archive_interactive_fresh_start_artifacts(
+            repo=repo,
+            results_path=results_path,
+            state_path_arg=args.state_path,
+            mode=args.mode,
+        )
+        args.force = True
     created = create_launch_manifest(args)
     started = start_runtime(args)
-    return {
+    payload = {
         "status": started["status"],
         "pid": started["pid"],
         "pgid": started["pgid"],
@@ -424,6 +459,9 @@ def launch_and_start_runtime(args: argparse.Namespace) -> dict[str, Any]:
         "mode": created["mode"],
         "goal": created["goal"],
     }
+    if archived_paths:
+        payload["archived_paths"] = archived_paths
+    return payload
 
 
 def run_runtime(args: argparse.Namespace) -> int:
@@ -637,6 +675,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_manifest_args(launch)
     add_runtime_start_args(launch)
+    launch.add_argument(
+        "--fresh-start",
+        action="store_true",
+        help="Archive prior persistent results/state artifacts before starting a new interactive run.",
+    )
 
     start = subparsers.add_parser("start", help="Start the detached autoresearch runtime.")
     start.add_argument("--repo")

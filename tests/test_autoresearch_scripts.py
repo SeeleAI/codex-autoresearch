@@ -135,8 +135,9 @@ class AutoresearchScriptsTest(unittest.TestCase):
         direction: str = "lower",
         verify: str = "python3 -c pass",
         guard: str = "python -m py_compile src",
+        fresh_start: bool = False,
     ) -> dict[str, object]:
-        return self.run_script(
+        args = [
             "autoresearch_runtime_ctl.py",
             "launch",
             "--repo",
@@ -159,7 +160,10 @@ class AutoresearchScriptsTest(unittest.TestCase):
             guard,
             "--codex-bin",
             str(fake_codex_path),
-        )
+        ]
+        if fresh_start:
+            args.append("--fresh-start")
+        return self.run_script(*args)
 
     def test_init_and_serial_iteration_state_is_consistent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2702,6 +2706,100 @@ class AutoresearchScriptsTest(unittest.TestCase):
 
             running = self.wait_for_runtime_status(tmpdir, {"running"})
             self.assertEqual(running["status"], "running")
+
+            stopped = self.run_script(
+                "autoresearch_runtime_ctl.py",
+                "stop",
+                "--repo",
+                str(tmpdir),
+            )
+            self.assertEqual(stopped["status"], "stopped")
+
+    def test_runtime_launch_fresh_start_archives_prior_results_and_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            fake_codex_path = tmpdir / "fake-codex"
+            self.write_sleeping_fake_codex(fake_codex_path)
+
+            old_results = tmpdir / "research-results.tsv"
+            old_state = tmpdir / "autoresearch-state.json"
+            old_launch = tmpdir / "autoresearch-launch.json"
+
+            old_results.write_text(
+                "iteration\tcommit\tmetric\tdelta\tguard\tstatus\tdescription\n"
+                "0\tabc1234\t10\t0\t-\tbaseline\told baseline\n",
+                encoding="utf-8",
+            )
+            old_state.write_text(
+                json.dumps(
+                    {
+                        "mode": "loop",
+                        "run_tag": "old-run",
+                        "config": {
+                            "goal": "Old goal",
+                            "scope": "src/**/*.py",
+                            "metric": "failure count",
+                            "direction": "lower",
+                            "verify": "python3 -c pass",
+                            "guard": "python -m py_compile src",
+                            "iterations": None,
+                            "stop_condition": None,
+                            "rollback_policy": None,
+                            "parallel_mode": "serial",
+                            "web_search": "disabled",
+                        },
+                        "state": {
+                            "iteration": 0,
+                            "baseline_metric": 10,
+                            "best_metric": 10,
+                            "best_iteration": 0,
+                            "current_metric": 10,
+                            "last_commit": "abc1234",
+                            "last_trial_commit": "abc1234",
+                            "last_trial_metric": 10,
+                            "keeps": 0,
+                            "discards": 0,
+                            "crashes": 0,
+                            "no_ops": 0,
+                            "blocked": 0,
+                            "splits": 0,
+                            "consecutive_discards": 0,
+                            "pivot_count": 0,
+                            "last_status": "baseline",
+                        },
+                        "updated_at": "2026-03-21T00:00:00Z",
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            old_launch.write_text(
+                json.dumps({"original_goal": "stale manifest"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            launched = self.launch_runtime(
+                tmpdir,
+                fake_codex_path=fake_codex_path,
+                original_goal="New goal",
+                goal="Reduce failures",
+                fresh_start=True,
+            )
+            self.assertEqual(launched["status"], "running")
+            self.assertEqual(
+                sorted(str(Path(path).resolve()) for path in launched["archived_paths"]),
+                sorted(
+                    [
+                        str((tmpdir / "research-results.prev.tsv").resolve()),
+                        str((tmpdir / "autoresearch-state.prev.json").resolve()),
+                    ]
+                ),
+            )
+            self.assertTrue((tmpdir / "research-results.prev.tsv").exists())
+            self.assertTrue((tmpdir / "autoresearch-state.prev.json").exists())
+            manifest = json.loads((tmpdir / "autoresearch-launch.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["original_goal"], "New goal")
 
             stopped = self.run_script(
                 "autoresearch_runtime_ctl.py",

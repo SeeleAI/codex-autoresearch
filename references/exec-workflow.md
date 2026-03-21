@@ -159,4 +159,4 @@ Here `<skill-root>` is the directory containing the loaded `SKILL.md`. In the co
 - **modes.md:** Added to the mode index.
 - **structured-output-spec.md:** JSON output templates for exec mode.
 - **environment-awareness.md:** Probes still run to filter infeasible hypotheses.
-- **health-check-protocol.md:** Health checks still run but warnings go to stderr as JSON.
+- **health-check-protocol.md:** The standalone helper remains available, but exec mode does not automatically invoke the detached-runtime health preflight. CI wrappers may call `autoresearch_health_check.py` explicitly if they want the same structured integrity report before running.

@@ -253,5 +253,5 @@ When falling back:
 - **autonomous-loop-protocol.md:** Phase 3 (Ideate) generates multiple hypotheses when parallel is active.
 - **environment-awareness.md:** Resource probes inform parallelism limits and GPU/NPU detection disables parallel mode.
 - **pivot-protocol.md:** A parallel batch with zero keeps counts as one discard toward pivot thresholds.
-- **lessons-protocol.md:** Extract lessons from all workers, not just the selected one.
+- **lessons-protocol.md:** Keep worker rows as audit detail and append the resulting interactive keep lesson only for the authoritative selected main row.
 - **health-check-protocol.md:** Check worktree health before each batch.

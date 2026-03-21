@@ -104,6 +104,14 @@ When the user replies with launch approval (`go`, `start`, `launch`, or an equiv
 3. Report that the managed run has started and where the runtime/log artifacts live.
 4. Do not ask the user to rerun a shell wrapper command just to continue overnight.
 
+If the chosen path is **Fresh start** after recovery analysis, the handoff should be:
+
+```bash
+python3 <skill-root>/scripts/autoresearch_runtime_ctl.py launch --fresh-start ...
+```
+
+This archives prior persistent `research-results.tsv` / `autoresearch-state.json` artifacts to `.prev` before the new managed run begins.
+
 ## Question Reference
 
 Categorized questions for common autoresearch scenarios. Pick 1-3 that are actually blocking. Prefer multiple-choice to reduce user effort.
@@ -246,8 +254,8 @@ When `session-resume-protocol.md` detects a prior run with a valid `autoresearch
    - The specific inconsistency reported by `<skill-root>/scripts/autoresearch_resume_check.py` (for example retained-metric mismatch, missing main row, or stale counters).
 2. Ask exactly one question with two choices:
    - **Resume:** use the JSON `config` as the authoritative source. Briefly confirm scope, metric, and verify command in a single confirmation block.
-   - **Fresh start:** rename old artifacts with `.prev` suffixes and proceed with the full wizard.
+   - **Fresh start:** archive old artifacts with `.prev` suffixes and proceed with the full wizard.
 3. If the user chooses to resume, present a condensed confirmation summary (same format as Step 3 above but sourced from JSON `config` instead of repo scanning).
-4. The user replies "go" and the loop starts. No further rounds.
+4. The user replies "go" and the loop starts via `autoresearch_runtime_ctl.py launch --fresh-start ...`. No further rounds.
 
 The mini-wizard respects the same two-phase boundary: all questions happen before launch.
