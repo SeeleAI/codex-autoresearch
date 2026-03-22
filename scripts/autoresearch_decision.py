@@ -11,6 +11,7 @@ from autoresearch_helpers import (
     clone_state_payload,
     decimal_to_json_number,
     improvement,
+    normalize_repo_commit_map,
     parse_decimal,
 )
 
@@ -65,20 +66,33 @@ def apply_status_transition(
     commit: str,
     direction: str,
     next_iteration: int,
+    repo_commit_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     new_payload = clone_state_payload(payload)
     state = new_payload["state"]
     metric_decimal = parse_decimal(metric, "metric")
+    existing_retained_repo_commits = normalize_repo_commit_map(state.get("last_repo_commits"))
+    existing_trial_repo_commits = normalize_repo_commit_map(state.get("last_trial_repo_commits"))
+    incoming_repo_commits = normalize_repo_commit_map(repo_commit_map or {})
+    trial_repo_commits = incoming_repo_commits or existing_trial_repo_commits or existing_retained_repo_commits
 
     state["iteration"] = next_iteration
     state["last_status"] = status
     state["last_trial_commit"] = commit
     state["last_trial_metric"] = decimal_to_json_number(metric_decimal)
+    if trial_repo_commits:
+        state["last_trial_repo_commits"] = dict(trial_repo_commits)
+    else:
+        state.pop("last_trial_repo_commits", None)
 
     if status == "keep":
         state["keeps"] = state.get("keeps", 0) + 1
         state["current_metric"] = decimal_to_json_number(metric_decimal)
         state["last_commit"] = commit
+        if trial_repo_commits:
+            state["last_repo_commits"] = dict(trial_repo_commits)
+        else:
+            state.pop("last_repo_commits", None)
         state["consecutive_discards"] = 0
         state["pivot_count"] = 0
         previous_best = parse_decimal(state["best_metric"], "best_metric")
@@ -100,6 +114,10 @@ def apply_status_transition(
         state["current_metric"] = decimal_to_json_number(metric_decimal)
         if commit != "-":
             state["last_commit"] = commit
+            if trial_repo_commits:
+                state["last_repo_commits"] = dict(trial_repo_commits)
+            else:
+                state.pop("last_repo_commits", None)
         state["consecutive_discards"] = 0
         previous_best = parse_decimal(state["best_metric"], "best_metric")
         if improvement(metric_decimal, previous_best, direction):
@@ -129,6 +147,10 @@ def apply_status_transition(
         "pivot_count": state["pivot_count"],
         "last_status": state["last_status"],
     }
+    if "last_repo_commits" in state:
+        rewritten_summary["last_repo_commits"] = dict(state["last_repo_commits"])
+    if "last_trial_repo_commits" in state:
+        rewritten_summary["last_trial_repo_commits"] = dict(state["last_trial_repo_commits"])
     return build_state_payload(
         mode=new_payload["mode"],
         run_tag=new_payload.get("run_tag") or None,

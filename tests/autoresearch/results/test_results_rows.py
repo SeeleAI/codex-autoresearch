@@ -98,6 +98,120 @@ class AutoresearchResultsRowsTest(AutoresearchScriptsTestBase):
             self.assertEqual(resume["decision"], "full_resume")
             self.assertEqual(resume["tsv_summary"]["iteration"], 2)
 
+    def test_multi_repo_provenance_is_persisted_in_state_for_init_and_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            companion = root / "companion"
+            primary.mkdir()
+            companion.mkdir()
+            results_path = primary / "research-results.tsv"
+            state_path = primary / "autoresearch-state.json"
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Coordinate two repos",
+                "--scope",
+                "src/",
+                "--companion-repo-scope",
+                f"{companion}=lib/",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "python3 -c pass",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "base111",
+                "--repo-commit",
+                f"{companion}=comp111",
+                "--baseline-description",
+                "baseline failures",
+            )
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["state"]["last_repo_commits"],
+                {
+                    str(primary.resolve()): "base111",
+                    str(companion.resolve()): "comp111",
+                },
+            )
+            self.assertEqual(state["state"]["last_trial_repo_commits"], state["state"]["last_repo_commits"])
+
+            self.run_script(
+                "autoresearch_record_iteration.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--status",
+                "discard",
+                "--metric",
+                "12",
+                "--commit",
+                "trial222",
+                "--repo-commit",
+                f"{companion}=comp222",
+                "--description",
+                "worse coordinated attempt",
+            )
+
+            discarded = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                discarded["state"]["last_repo_commits"],
+                {
+                    str(primary.resolve()): "base111",
+                    str(companion.resolve()): "comp111",
+                },
+            )
+            self.assertEqual(
+                discarded["state"]["last_trial_repo_commits"],
+                {
+                    str(primary.resolve()): "trial222",
+                    str(companion.resolve()): "comp222",
+                },
+            )
+
+            self.run_script(
+                "autoresearch_record_iteration.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--status",
+                "keep",
+                "--metric",
+                "8",
+                "--commit",
+                "keep333",
+                "--repo-commit",
+                f"{companion}=comp333",
+                "--guard",
+                "pass",
+                "--description",
+                "better coordinated attempt",
+            )
+
+            kept = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                kept["state"]["last_repo_commits"],
+                {
+                    str(primary.resolve()): "keep333",
+                    str(companion.resolve()): "comp333",
+                },
+            )
+            self.assertEqual(kept["state"]["last_trial_repo_commits"], kept["state"]["last_repo_commits"])
+
     def test_discard_requires_commit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -722,4 +836,3 @@ class AutoresearchResultsRowsTest(AutoresearchScriptsTestBase):
             )
             self.assertEqual(resume["decision"], "full_resume")
             self.assertEqual(resume["state_path"], str(state_path))
-

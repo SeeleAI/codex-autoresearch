@@ -261,7 +261,6 @@ def log_summary(parsed: ParsedLog, direction: str) -> dict[str, Any]:
         "worker_rows": 0,
         "main_rows": 1,
     }
-
     for row in parsed.rows[1:]:
         if row.worker_parent_iteration is not None:
             summary["worker_rows"] += 1
@@ -405,6 +404,12 @@ def build_state_payload(
         },
         "updated_at": utc_now(),
     }
+    last_repo_commits = summary.get("last_repo_commits")
+    if isinstance(last_repo_commits, dict) and last_repo_commits:
+        payload["state"]["last_repo_commits"] = deepcopy(last_repo_commits)
+    last_trial_repo_commits = summary.get("last_trial_repo_commits")
+    if isinstance(last_trial_repo_commits, dict) and last_trial_repo_commits:
+        payload["state"]["last_trial_repo_commits"] = deepcopy(last_trial_repo_commits)
     if supervisor is not None:
         payload["supervisor"] = deepcopy(supervisor)
     return payload

@@ -9,6 +9,8 @@ from pathlib import Path
 from autoresearch_helpers import (
     AutoresearchError,
     archive_path_to_prev,
+    build_repo_targets,
+    repo_commit_map_for_targets,
     build_state_payload,
     cleanup_exec_state,
     default_state_path,
@@ -18,10 +20,12 @@ from autoresearch_helpers import (
     make_row,
     parse_decimal,
     resolve_state_path,
+    serialize_repo_targets,
     write_json_atomic,
     write_results_log,
 )
-from autoresearch_preflight import evaluate_repo_preflight
+from autoresearch_preflight import evaluate_managed_repos_preflight
+from autoresearch_runtime_common import DEFAULT_EXECUTION_POLICY, EXECUTION_POLICY_CHOICES
 
 
 class HardBlockerError(AutoresearchError):
@@ -40,10 +44,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", required=True)
     parser.add_argument("--goal", required=True)
     parser.add_argument("--scope", required=True)
+    parser.add_argument(
+        "--companion-repo-scope",
+        action="append",
+        default=[],
+        help="Allow edits in a companion repo using PATH=SCOPE. May be repeated.",
+    )
     parser.add_argument("--metric-name", required=True)
     parser.add_argument("--direction", required=True, choices=["lower", "higher"])
     parser.add_argument("--verify", required=True)
     parser.add_argument("--guard")
+    parser.add_argument(
+        "--execution-policy",
+        choices=EXECUTION_POLICY_CHOICES,
+        default=DEFAULT_EXECUTION_POLICY,
+        help="Execution policy used for this run's Codex sessions.",
+    )
     parser.add_argument("--iterations", type=int)
     parser.add_argument("--run-tag")
     parser.add_argument("--stop-condition")
@@ -54,6 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-metric", required=True)
     parser.add_argument("--baseline-commit", required=True)
     parser.add_argument("--baseline-description", required=True)
+    parser.add_argument(
+        "--repo-commit",
+        action="append",
+        default=[],
+        help="Record per-repo commit provenance using PATH=COMMIT. May be repeated.",
+    )
     parser.add_argument("--force", action="store_true")
     return parser
 
@@ -67,18 +89,23 @@ def main() -> int:
     repo_context = repo_hint or Path.cwd()
     repo = find_repo_root(repo_context)
     state_path = resolve_state_path(args.state_path, mode=args.mode, cwd=repo_context)
+    repo_targets = build_repo_targets(
+        primary_repo=repo,
+        primary_scope=args.scope,
+        companion_repo_scopes=args.companion_repo_scope,
+    )
 
     if args.mode == "exec":
-        preflight = evaluate_repo_preflight(
-            repo=repo,
+        preflight = evaluate_managed_repos_preflight(
+            primary_repo=repo,
             results_path=results_path,
             state_path_arg=args.state_path,
             verify_command=args.verify,
-            scope_text=args.scope,
             commit_phase="prelaunch",
             include_health=False,
             rollback_policy=None,
             destructive_approved=False,
+            repo_targets=repo_targets,
         )
         if preflight["decision"] == "block":
             raise HardBlockerError(
@@ -122,7 +149,9 @@ def main() -> int:
 
     config = {
         "goal": args.goal,
-        "scope": args.scope,
+        "scope": repo_targets[0].scope,
+        "repos": serialize_repo_targets(repo_targets),
+        "execution_policy": args.execution_policy,
         "metric": args.metric_name,
         "direction": args.direction,
         "verify": args.verify,
@@ -152,6 +181,14 @@ def main() -> int:
         "pivot_count": 0,
         "last_status": "baseline",
     }
+    repo_commit_map = repo_commit_map_for_targets(
+        repo_targets=repo_targets,
+        primary_commit=args.baseline_commit,
+        repo_commit_specs=args.repo_commit,
+    )
+    if repo_commit_map:
+        summary["last_repo_commits"] = dict(repo_commit_map)
+        summary["last_trial_repo_commits"] = dict(repo_commit_map)
     payload = build_state_payload(
         mode=args.mode,
         run_tag=args.run_tag,

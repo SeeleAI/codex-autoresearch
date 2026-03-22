@@ -194,7 +194,7 @@ Interactive smoke repo prepared at:
   $repo
 
 1. Start Codex:
-   codex --full-auto --no-alt-screen -C "$repo"
+   codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen -C "$repo"
 
 2. Paste this prompt:
 $(sed 's/^/   /' "$repo/prompt.txt")

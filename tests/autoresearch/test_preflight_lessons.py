@@ -224,6 +224,60 @@ class AutoresearchPreflightLessonsTest(AutoresearchScriptsTestBase):
             self.assertEqual(result["decision"], "block")
             self.assertIn("autoresearch-state.json", result["staged_artifacts"])
 
+    def test_commit_gate_allows_in_scope_changes_in_companion_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            companion = root / "companion"
+            primary.mkdir()
+            companion.mkdir()
+            subprocess.run(["git", "init", str(primary)], check=True, capture_output=True, text=True)
+            subprocess.run(["git", "init", str(companion)], check=True, capture_output=True, text=True)
+            nested = companion / "pkg"
+            nested.mkdir(parents=True)
+            (nested / "a.py").write_text("print('ok')\n", encoding="utf-8")
+
+            result = self.run_script(
+                "autoresearch_commit_gate.py",
+                "--repo",
+                str(primary),
+                "--phase",
+                "precommit",
+                "--scope",
+                "src/**/*.py",
+                "--companion-repo-scope",
+                f"{companion}=pkg/",
+            )
+            self.assertEqual(result["decision"], "allow")
+            self.assertEqual(len(result["repo_gates"]), 2)
+            companion_gate = next(g for g in result["repo_gates"] if g["role"] == "companion")
+            self.assertEqual(companion_gate["unexpected_worktree"], [])
+
+    def test_commit_gate_blocks_out_of_scope_changes_in_companion_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            companion = root / "companion"
+            primary.mkdir()
+            companion.mkdir()
+            subprocess.run(["git", "init", str(primary)], check=True, capture_output=True, text=True)
+            subprocess.run(["git", "init", str(companion)], check=True, capture_output=True, text=True)
+            (companion / "notes.txt").write_text("drift\n", encoding="utf-8")
+
+            result = self.run_script(
+                "autoresearch_commit_gate.py",
+                "--repo",
+                str(primary),
+                "--phase",
+                "precommit",
+                "--scope",
+                "src/**/*.py",
+                "--companion-repo-scope",
+                f"{companion}=pkg/",
+            )
+            self.assertEqual(result["decision"], "block")
+            self.assertTrue(any(f"[{companion.resolve()}]" in blocker for blocker in result["blockers"]))
+
     def test_health_check_reports_warning_for_unexpected_worktree_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -419,6 +473,36 @@ class AutoresearchPreflightLessonsTest(AutoresearchScriptsTestBase):
             )
             self.assertEqual(result["decision"], "ok")
             self.assertFalse(any("unexpected worktree changes" in warning for warning in result["warnings"]))
+
+    def test_health_check_warns_for_companion_repo_out_of_scope_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            companion = root / "companion"
+            primary.mkdir()
+            companion.mkdir()
+            subprocess.run(["git", "init", str(primary)], check=True, capture_output=True, text=True)
+            subprocess.run(["git", "init", str(companion)], check=True, capture_output=True, text=True)
+            (companion / "notes.txt").write_text("surprise\n", encoding="utf-8")
+
+            result = self.run_script(
+                "autoresearch_health_check.py",
+                "--repo",
+                str(primary),
+                "--results-path",
+                str(primary / "research-results.tsv"),
+                "--verify-cmd",
+                "python3 -c pass",
+                "--scope",
+                "src/**/*.py",
+                "--companion-repo-scope",
+                f"{companion}=pkg/",
+                "--min-free-mb",
+                "1",
+            )
+            self.assertEqual(result["decision"], "warn")
+            self.assertTrue(any(f"[{companion.resolve()}]" in warning for warning in result["warnings"]))
+            self.assertEqual(len(result["repo_worktree_checks"]), 2)
 
     def test_health_check_uses_results_repo_when_repo_flag_is_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

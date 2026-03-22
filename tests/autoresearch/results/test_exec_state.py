@@ -190,6 +190,7 @@ class AutoresearchExecStateTest(AutoresearchScriptsTestBase):
             state = json.loads(scratch_state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["mode"], "exec")
             self.assertEqual(state["config"]["goal"], "Reduce failures")
+            self.assertEqual(state["config"]["execution_policy"], "danger_full_access")
             self.assertFalse(state.get("stale", False))
 
     def test_exec_init_run_archives_prior_results_and_repo_state(self) -> None:
@@ -447,4 +448,3 @@ class AutoresearchExecStateTest(AutoresearchScriptsTestBase):
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["state"]["iteration"], 1)
             self.assertEqual(state["state"]["current_metric"], 8)
-

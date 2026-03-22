@@ -19,6 +19,7 @@ from autoresearch_helpers import (
     default_launch_manifest_path,
     default_runtime_log_path,
     default_runtime_state_path,
+    repo_targets_from_config,
     read_launch_manifest,
     resolve_state_path,
     resolve_state_path_for_log,
@@ -26,13 +27,14 @@ from autoresearch_helpers import (
     write_json_atomic,
 )
 from autoresearch_launch_gate import evaluate_launch_context, pid_is_alive
-from autoresearch_preflight import evaluate_repo_preflight
+from autoresearch_preflight import evaluate_managed_repos_preflight
 from autoresearch_resume_prompt import build_runtime_prompt
 from autoresearch_supervisor_status import evaluate_supervisor_status
 from autoresearch_runtime_common import (
-    DEFAULT_CODEX_ARGS,
+    DEFAULT_EXECUTION_POLICY,
     DEFAULT_RESULTS_PATH,
     append_completion_summary_if_possible,
+    codex_args_for_execution_policy,
     destructive_rollback_approved,
     ensure_runtime_not_running,
     load_runtime_if_exists,
@@ -43,6 +45,9 @@ from autoresearch_runtime_common import (
     resolve_repo_path,
     resolve_repo_relative,
 )
+
+STOP_POLL_INTERVAL_SECONDS = 0.1
+STOP_KILL_WAIT_SECONDS = 1.0
 
 
 def build_codex_exec_command(
@@ -75,6 +80,50 @@ def mark_runtime_needs_human(
     return 2
 
 
+def wait_for_process_exit(pid: int | None, *, timeout: float) -> bool:
+    if not pid_is_alive(pid):
+        return True
+    deadline = time.time() + max(timeout, 0.0)
+    while time.time() < deadline:
+        time.sleep(STOP_POLL_INTERVAL_SECONDS)
+        if not pid_is_alive(pid):
+            return True
+    return not pid_is_alive(pid)
+
+
+def persisted_runtime_summary(
+    *,
+    runtime: dict[str, Any],
+    runtime_path: Path,
+    launch_path: Path,
+    results_path: Path,
+    state_path: Path,
+    status: str | None = None,
+    reason: str | None = None,
+    runtime_running: bool = False,
+    error: str | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "status": status or runtime.get("status"),
+        "pid": runtime.get("pid"),
+        "pgid": runtime.get("pgid"),
+        "runtime_path": str(runtime_path),
+        "log_path": runtime.get("log_path", ""),
+        "reason": reason or runtime.get("terminal_reason", "none"),
+        "launch_path": str(launch_path),
+        "results_path": str(results_path),
+        "state_path": str(state_path),
+        "last_health_check": runtime.get("last_health_check"),
+        "last_commit_gate": runtime.get("last_commit_gate"),
+    }
+    if runtime_running:
+        payload["runtime_running"] = True
+    effective_error = error or runtime.get("last_error")
+    if effective_error:
+        payload["error"] = effective_error
+    return payload
+
+
 def runtime_summary(
     *,
     repo: Path,
@@ -98,7 +147,33 @@ def runtime_summary(
             "state_path": str(resolved_state_path),
         }
 
-    if runtime is not None and pid_is_alive(runtime.get("pid")):
+    runtime_alive = runtime is not None and pid_is_alive(runtime.get("pid"))
+
+    if runtime is not None and runtime.get("status") == "needs_human":
+        return persisted_runtime_summary(
+            runtime=runtime,
+            runtime_path=runtime_path,
+            launch_path=launch_path,
+            results_path=results_path,
+            state_path=resolved_state_path,
+            runtime_running=bool(runtime_alive),
+        )
+
+    if runtime is not None and runtime.get("status") == "stopped" and runtime_alive:
+        error = runtime.get("last_error") or "Runtime process is still alive after a stop request."
+        return persisted_runtime_summary(
+            runtime=runtime,
+            runtime_path=runtime_path,
+            launch_path=launch_path,
+            results_path=results_path,
+            state_path=resolved_state_path,
+            status="needs_human",
+            reason="stop_failed",
+            runtime_running=True,
+            error=error,
+        )
+
+    if runtime is not None and runtime_alive:
         return {
             "status": "running",
             "pid": runtime.get("pid"),
@@ -114,22 +189,13 @@ def runtime_summary(
         }
 
     if runtime is not None and runtime.get("status") in {"terminal", "needs_human", "stopped"}:
-        payload = {
-            "status": runtime.get("status"),
-            "pid": runtime.get("pid"),
-            "pgid": runtime.get("pgid"),
-            "runtime_path": str(runtime_path),
-            "log_path": runtime.get("log_path", ""),
-            "reason": runtime.get("terminal_reason", "none"),
-            "launch_path": str(launch_path),
-            "results_path": str(results_path),
-            "state_path": str(resolved_state_path),
-            "last_health_check": runtime.get("last_health_check"),
-            "last_commit_gate": runtime.get("last_commit_gate"),
-        }
-        if runtime.get("last_error"):
-            payload["error"] = runtime["last_error"]
-        return payload
+        return persisted_runtime_summary(
+            runtime=runtime,
+            runtime_path=runtime_path,
+            launch_path=launch_path,
+            results_path=results_path,
+            state_path=resolved_state_path,
+        )
 
     launch_context = evaluate_launch_context(
         results_path=results_path,
@@ -254,13 +320,13 @@ def evaluate_runtime_preflight(
     min_free_mb: int,
 ) -> dict[str, Any]:
     config = dict(launch_manifest.get("config", {}))
-    return evaluate_repo_preflight(
-        repo=repo,
+    return evaluate_managed_repos_preflight(
+        primary_repo=repo,
         results_path=results_path,
         state_path_arg=state_path_arg,
         verify_command=str(config.get("verify", "")),
-        scope_text=str(config.get("scope") or ""),
         commit_phase="precommit",
+        repo_targets=repo_targets_from_config(repo, config),
         min_free_mb=min_free_mb,
         include_health=True,
         rollback_policy=str(config.get("rollback_policy") or ""),
@@ -296,6 +362,10 @@ def start_runtime(args: argparse.Namespace, *, runner_path: Path) -> dict[str, A
         raise AutoresearchError(f"Missing JSON file: {launch_path}")
 
     launch_manifest = read_launch_manifest(launch_path)
+    codex_args_for_execution_policy(
+        str(launch_manifest.get("config", {}).get("execution_policy") or DEFAULT_EXECUTION_POLICY),
+        extra_args=args.codex_arg,
+    )
     preflight = evaluate_runtime_preflight(
         repo=repo,
         results_path=results_path,
@@ -430,9 +500,13 @@ def run_runtime(args: argparse.Namespace) -> int:
         )
         persist_runtime(runtime_path, runtime)
 
-    codex_args = list(DEFAULT_CODEX_ARGS)
-    if args.codex_arg:
-        codex_args = args.codex_arg
+    execution_policy = str(
+        launch_manifest.get("config", {}).get("execution_policy") or DEFAULT_EXECUTION_POLICY
+    )
+    codex_args = codex_args_for_execution_policy(
+        execution_policy,
+        extra_args=args.codex_arg,
+    )
     startup_failure_count = 0
     while True:
         launch_context = evaluate_launch_context(
@@ -574,14 +648,29 @@ def stop_runtime(args: argparse.Namespace) -> dict[str, Any]:
             os.killpg(int(pgid), signal.SIGTERM)
         except ProcessLookupError:
             pass
-        deadline = time.time() + args.grace_seconds
-        while time.time() < deadline and pid_is_alive(pid):
-            time.sleep(0.1)
-        if pid_is_alive(pid):
+        stopped_after_term = wait_for_process_exit(pid, timeout=args.grace_seconds)
+        if not stopped_after_term:
             try:
                 os.killpg(int(pgid), signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            stopped_after_kill = wait_for_process_exit(pid, timeout=STOP_KILL_WAIT_SECONDS)
+            if not stopped_after_kill:
+                error = f"Runtime process {pid} remained alive after SIGKILL."
+                runtime["status"] = "needs_human"
+                runtime["terminal_reason"] = "stop_failed"
+                runtime["last_decision"] = "needs_human"
+                runtime["last_reason"] = "stop_failed"
+                runtime["last_error"] = error
+                persist_runtime(runtime_path, runtime)
+                return {
+                    "status": "needs_human",
+                    "runtime_path": str(runtime_path),
+                    "pid": pid,
+                    "pgid": pgid,
+                    "reason": "stop_failed",
+                    "error": error,
+                }
 
     append_completion_summary_if_possible(
         results_path=Path(str(runtime["results_path"])),
@@ -589,6 +678,7 @@ def stop_runtime(args: argparse.Namespace) -> dict[str, Any]:
     )
     runtime["status"] = "stopped"
     runtime["terminal_reason"] = "user_stopped"
+    runtime.pop("last_error", None)
     persist_runtime(runtime_path, runtime)
     return {
         "status": "stopped",
