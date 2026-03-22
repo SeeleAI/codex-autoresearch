@@ -508,6 +508,7 @@ iteration  commit   metric  delta   status    description
 - `foreground` では Codex は現在のセッション内に残り、そのまま反復を続けます。作られるのは `research-results.tsv`、`autoresearch-state.json`、lessons だけです
 - `background` では Codex は `autoresearch-launch.json` を書き込み、切り離された実行コントローラを自動で起動します
 - `foreground` と `background` は同じ loop プロトコル、metric の意味、repo/scope ルールを共有しますが、同じ repo/run に対しては排他的です。同じ primary repo の artifacts に対して両方を同時に走らせないでください
+- 後から同じ interactive run を別のモードで続けたい場合でも、入口は同じ `$codex-autoresearch` のままです。続行前に、共有 state を選んだモードへ先に同期させる必要があります
 - 単一リポジトリの実行は引き続きデフォルトです。この場合、宣言した scope は run-control 工程を保持する primary repo にだけ適用されます
 - 実験が複数リポジトリにまたがる場合、確認済みの launch manifest には companion repos と各 repo 固有の scope も記述できます。runtime preflight は管理対象の全 repo を検査しますが、`research-results.tsv`、`autoresearch-state.json`、runtime-control の各工件は primary repo に置かれたままです
 - このモデルでは TSV の `commit` 列は引き続き primary repo の commit だけを記録し、companion repo ごとの commit provenance は `autoresearch-state.json` に保存されます

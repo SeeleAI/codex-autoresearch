@@ -508,6 +508,7 @@ iteration  commit   metric  delta   status    description
 - В `foreground` Codex остается в текущей сессии, продолжает цикл вживую и пишет только `research-results.tsv`, `autoresearch-state.json` и lessons
 - В `background` Codex записывает `autoresearch-launch.json` и автоматически запускает отсоединенный контроллер выполнения
 - `foreground` и `background` используют один и тот же loop-протокол, одну и ту же семантику метрик и одни и те же правила repo/scope, но для одного и того же repo/run они взаимоисключающи; не запускайте оба режима одновременно поверх одних и тех же артефактов primary repo
+- Если позже вы захотите продолжить тот же interactive run в другом режиме, оставайтесь на том же входе `$codex-autoresearch`; перед продолжением общий state нужно сначала синхронизировать с выбранным режимом
 - Запуски в одном репозитории остаются вариантом по умолчанию; в этом случае объявленный scope относится только к primary repo, где лежат run-control артефакты
 - Если эксперимент затрагивает несколько репозиториев, подтвержденный launch manifest может также перечислять companion repos, у каждого из которых свой scope. Runtime preflight проверяет все управляемые репозитории, но `research-results.tsv`, `autoresearch-state.json` и runtime-control артефакты по-прежнему привязаны к primary repo
 - В этой модели колонка `commit` в TSV по-прежнему хранит только commit primary repo, а provenance commit-ов для companion repos записывается в `autoresearch-state.json`

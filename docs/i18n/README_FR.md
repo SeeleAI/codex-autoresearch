@@ -510,6 +510,7 @@ Pour les utilisateurs humains, il n'y a maintenant plus qu'un seul point d'entre
 - En `foreground`, Codex reste dans la session courante, continue la boucle en direct et n'ecrit que `research-results.tsv`, `autoresearch-state.json` et les lessons
 - En `background`, Codex ecrit `autoresearch-launch.json` et demarre automatiquement le controleur d'execution detache
 - `foreground` et `background` partagent le meme protocole de boucle, la meme semantique de metrique et les memes regles de repo/scope, mais ils sont mutuellement exclusifs pour un meme repo/run ; n'utilisez pas les deux modes en meme temps sur les memes artefacts du depot primaire
+- Si vous voulez ensuite reprendre ce meme run interactif dans l'autre mode, restez sur la meme entree `$codex-autoresearch` ; avant la reprise, l'etat partage doit d'abord etre synchronise vers le mode cible
 - Les executions sur un seul depot restent le cas par defaut ; dans ce cas, le scope declare ne s'applique qu'au depot primaire qui porte les artefacts de controle
 - Si l'experience couvre plusieurs depots, le manifeste de lancement confirme peut aussi declarer des depots companions avec un scope distinct pour chacun. Le preflight du runtime couvre alors tous les depots geres, tandis que `research-results.tsv`, `autoresearch-state.json` et les artefacts de controle restent ancres dans le depot primaire
 - Dans ce modele, la colonne `commit` du TSV continue de suivre uniquement le commit du depot primaire ; la provenance des commits des depots companions est conservee dans `autoresearch-state.json`

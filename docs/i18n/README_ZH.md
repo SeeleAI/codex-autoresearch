@@ -523,6 +523,7 @@ iteration  commit   metric  delta   status    description
 - 如果选择 `foreground`，Codex 会留在当前会话里持续迭代，只写 `research-results.tsv`、`autoresearch-state.json` 和 lessons，不会创建 launch/runtime 控制文件
 - 如果选择 `background`，Codex 会写入 `autoresearch-launch.json` 并启动分离的运行控制器
 - `foreground` 和 `background` 共享同一套 loop 协议、指标语义以及 repo/scope 规则，但对同一个 repo/run 来说它们是互斥的；不要同时让两种模式写同一套主仓工件
+- 如果之后想把同一个交互 run 切到另一种模式，仍然通过同一个 `$codex-autoresearch` 入口继续；继续之前，共享 state 需要先同步到目标模式
 - 单仓运行仍然是默认形态；此时声明的 scope 只作用于承载 run-control 工件的主仓库
 - 如果实验跨多个仓库，确认后的 launch manifest 也可以声明 companion repos，并为每个仓库单独给出 scope。runtime preflight 会检查所有托管仓库，但 `research-results.tsv`、`autoresearch-state.json` 以及 runtime-control 工件仍然锚定在主仓库
 - 在这种模型下，TSV 的 `commit` 列仍然只记录主仓库提交；companion repo 的逐仓 commit provenance 则记录在 `autoresearch-state.json` 中
