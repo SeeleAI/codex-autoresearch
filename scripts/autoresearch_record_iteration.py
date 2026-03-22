@@ -13,14 +13,19 @@ from autoresearch_helpers import (
     make_row,
     parse_decimal,
     parse_results_log,
+    repo_commit_map_for_targets,
+    repo_targets_from_config,
     require_consistent_state,
     resolve_state_path_for_log,
+    results_repo_root,
     write_json_atomic,
 )
 from autoresearch_lessons import append_iteration_lesson, lessons_path_from_results
 
 
 STATUSES = ["keep", "discard", "crash", "no-op", "blocked", "drift", "refine", "pivot", "search", "split"]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Append one main iteration row and atomically update autoresearch-state.json."
@@ -38,6 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--commit", default="-")
     parser.add_argument("--guard", default="-")
     parser.add_argument("--description", required=True)
+    parser.add_argument(
+        "--repo-commit",
+        action="append",
+        default=[],
+        help="Record per-repo commit provenance using PATH=COMMIT. May be repeated.",
+    )
     return parser
 
 
@@ -82,6 +93,15 @@ def main() -> int:
     )
     append_rows(results_path, [new_row])
 
+    repo_targets = repo_targets_from_config(results_repo_root(results_path), payload.get("config", {}))
+    state = payload["state"]
+    repo_commit_map = repo_commit_map_for_targets(
+        repo_targets=repo_targets,
+        primary_commit=args.commit,
+        repo_commit_specs=args.repo_commit,
+        existing=state.get("last_trial_repo_commits") or state.get("last_repo_commits"),
+    )
+
     final_payload = apply_status_transition(
         payload,
         status=args.status,
@@ -89,6 +109,7 @@ def main() -> int:
         commit=args.commit,
         direction=direction,
         next_iteration=next_iteration,
+        repo_commit_map=repo_commit_map,
     )
     write_json_atomic(state_path, final_payload)
 
@@ -107,6 +128,7 @@ def main() -> int:
                 "status": args.status,
                 "retained_metric": final_payload["state"]["current_metric"],
                 "trial_metric": final_payload["state"]["last_trial_metric"],
+                "trial_repo_commits": final_payload["state"].get("last_trial_repo_commits", {}),
                 "results_path": str(results_path),
                 "state_path": str(state_path),
             },

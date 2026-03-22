@@ -822,6 +822,86 @@ class AutoresearchSupervisorLaunchTest(AutoresearchScriptsTestBase):
                 prompt.replace("/var/", "/private/var/"),
             )
 
+    def test_create_launch_manifest_persists_managed_repo_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            companion = root / "companion"
+            primary.mkdir()
+            companion.mkdir()
+
+            launch = self.create_launch_manifest(
+                primary,
+                scope="src/**/*.py",
+                companion_repo_scopes=[f"{companion}=pkg/"],
+            )
+
+            manifest = json.loads(Path(str(launch["launch_path"])).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["config"]["scope"], "src/**/*.py")
+            self.assertEqual(manifest["config"]["execution_policy"], "danger_full_access")
+            self.assertEqual(
+                manifest["config"]["repos"],
+                [
+                    {"path": str(primary.resolve()), "scope": "src/**/*.py", "role": "primary"},
+                    {"path": str(companion.resolve()), "scope": "pkg/", "role": "companion"},
+                ],
+            )
+
+    def test_resume_prompt_lists_managed_repo_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            companion = root / "companion"
+            outside = root / "outside"
+            primary.mkdir()
+            companion.mkdir()
+            outside.mkdir()
+
+            self.create_launch_manifest(
+                primary,
+                scope="src/**/*.py",
+                companion_repo_scopes=[f"{companion}=pkg/"],
+            )
+            results_path = primary / "research-results.tsv"
+            state_path = primary / "autoresearch-state.json"
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--companion-repo-scope",
+                f"{companion}=pkg/",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "pytest -q",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+            )
+
+            prompt = self.run_script_text(
+                "autoresearch_resume_prompt.py",
+                "--results-path",
+                str(results_path),
+                cwd=outside,
+            )
+            self.assertIn("Managed repos:", prompt)
+            self.assertIn("- . (primary) :: src/**/*.py", prompt)
+            self.assertIn(f"- {companion.resolve()} (companion) :: pkg/", prompt)
+
     def test_resume_prompt_requires_confirmed_launch_manifest_for_legacy_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)

@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import time
+from unittest import mock
 from pathlib import Path
 
 from .base import AutoresearchScriptsTestBase, REPO_ROOT, SCRIPTS_DIR
+
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+import autoresearch_runtime_ops
 
 
 class AutoresearchRuntimeControllerTest(AutoresearchScriptsTestBase):
@@ -379,6 +386,116 @@ class AutoresearchRuntimeControllerTest(AutoresearchScriptsTestBase):
             self.assertIn("Invalid JSON", stopped["error"])
             self.assertEqual(stopped["runtime_path"], str(runtime_path.resolve()))
 
+    def test_runtime_stop_marks_needs_human_when_runner_survives_sigkill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            runtime_path = tmpdir / "autoresearch-runtime.json"
+            runtime_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "repo": str(tmpdir),
+                        "launch_path": str(tmpdir / "autoresearch-launch.json"),
+                        "results_path": str(tmpdir / "research-results.tsv"),
+                        "state_path": str(tmpdir / "autoresearch-state.json"),
+                        "log_path": str(tmpdir / "autoresearch-runtime.log"),
+                        "status": "running",
+                        "terminal_reason": "none",
+                        "pid": 4242,
+                        "pgid": 4242,
+                        "command": [],
+                        "requested_stop_at": None,
+                        "last_decision": "",
+                        "last_reason": "",
+                        "last_seen_iteration": None,
+                        "last_seen_status": "",
+                        "created_at": "2026-03-21T00:00:00Z",
+                        "updated_at": "2026-03-21T00:00:00Z",
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            args = argparse.Namespace(
+                repo=str(tmpdir),
+                runtime_path=None,
+                grace_seconds=0.0,
+            )
+            with (
+                mock.patch.object(autoresearch_runtime_ops, "pid_is_alive", return_value=True),
+                mock.patch.object(
+                    autoresearch_runtime_ops,
+                    "wait_for_process_exit",
+                    side_effect=[False, False],
+                ),
+                mock.patch.object(autoresearch_runtime_ops.os, "killpg") as killpg,
+            ):
+                stopped = autoresearch_runtime_ops.stop_runtime(args)
+
+            self.assertEqual(stopped["status"], "needs_human")
+            self.assertEqual(stopped["reason"], "stop_failed")
+            self.assertIn("remained alive after SIGKILL", stopped["error"])
+            self.assertEqual(
+                killpg.call_args_list,
+                [
+                    mock.call(4242, autoresearch_runtime_ops.signal.SIGTERM),
+                    mock.call(4242, autoresearch_runtime_ops.signal.SIGKILL),
+                ],
+            )
+            runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+            self.assertEqual(runtime["status"], "needs_human")
+            self.assertEqual(runtime["terminal_reason"], "stop_failed")
+            self.assertIn("remained alive after SIGKILL", runtime["last_error"])
+
+    def test_runtime_status_reports_stop_failed_even_if_pid_still_alive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            runtime_path = tmpdir / "autoresearch-runtime.json"
+            runtime_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "repo": str(tmpdir),
+                        "launch_path": str(tmpdir / "autoresearch-launch.json"),
+                        "results_path": str(tmpdir / "research-results.tsv"),
+                        "state_path": str(tmpdir / "autoresearch-state.json"),
+                        "log_path": str(tmpdir / "autoresearch-runtime.log"),
+                        "status": "stopped",
+                        "terminal_reason": "user_stopped",
+                        "pid": 4242,
+                        "pgid": 4242,
+                        "command": [],
+                        "requested_stop_at": "2026-03-21T00:00:00Z",
+                        "last_decision": "",
+                        "last_reason": "",
+                        "last_seen_iteration": None,
+                        "last_seen_status": "",
+                        "last_error": "Runtime process 4242 remained alive after SIGKILL.",
+                        "created_at": "2026-03-21T00:00:00Z",
+                        "updated_at": "2026-03-21T00:00:00Z",
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(autoresearch_runtime_ops, "pid_is_alive", return_value=True):
+                status = autoresearch_runtime_ops.runtime_summary(
+                    repo=tmpdir,
+                    results_path=tmpdir / "research-results.tsv",
+                    state_path_arg=None,
+                    launch_path=tmpdir / "autoresearch-launch.json",
+                    runtime_path=runtime_path,
+                )
+
+            self.assertEqual(status["status"], "needs_human")
+            self.assertEqual(status["reason"], "stop_failed")
+            self.assertTrue(status["runtime_running"])
+            self.assertIn("remained alive after SIGKILL", status["error"])
+
     def test_runtime_launch_blocks_when_codex_bin_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -410,6 +527,51 @@ class AutoresearchRuntimeControllerTest(AutoresearchScriptsTestBase):
             self.assertNotEqual(completed.returncode, 0)
             self.assertIn("Codex executable is not available", completed.stderr)
             self.assertFalse((tmpdir / "autoresearch-runtime.json").exists())
+
+    def test_runtime_launch_blocks_on_out_of_scope_companion_repo_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            companion = root / "companion"
+            primary.mkdir()
+            companion.mkdir()
+            subprocess.run(["git", "init", str(primary)], check=True, capture_output=True, text=True)
+            subprocess.run(["git", "init", str(companion)], check=True, capture_output=True, text=True)
+            (companion / "notes.txt").write_text("drift\n", encoding="utf-8")
+
+            fake_codex_path = primary / "fake-codex"
+            self.write_sleeping_fake_codex(fake_codex_path)
+
+            completed = self.run_script_completed(
+                "autoresearch_runtime_ctl.py",
+                "launch",
+                "--repo",
+                str(primary),
+                "--original-goal",
+                "Coordinate two repos",
+                "--mode",
+                "loop",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--companion-repo-scope",
+                f"{companion}=pkg/",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "python3 -c pass",
+                "--guard",
+                "python -m py_compile src",
+                "--codex-bin",
+                str(fake_codex_path),
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("Runtime preflight failed", completed.stderr)
+            self.assertIn("notes.txt", completed.stderr)
+            self.assertFalse((primary / "autoresearch-runtime.json").exists())
 
     def test_runtime_run_marks_needs_human_when_codex_exec_is_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -649,6 +811,7 @@ class AutoresearchRuntimeControllerTest(AutoresearchScriptsTestBase):
             state_path = tmpdir / "autoresearch-state.json"
             fake_codex_path = tmpdir / "fake-codex"
             prompt_path = tmpdir / ".runtime-prompt.txt"
+            args_path = tmpdir / ".codex-args.txt"
 
             self.create_launch_manifest(
                 tmpdir,
@@ -666,6 +829,8 @@ class AutoresearchRuntimeControllerTest(AutoresearchScriptsTestBase):
                     'repo=""',
                     "prompt_from_stdin=0",
                     f'prompt_path="{prompt_path}"',
+                    f'args_path="{args_path}"',
+                    'printf "%s\\n" "$@" >"$args_path"',
                     'while [[ $# -gt 0 ]]; do',
                     '  case "$1" in',
                     '    -C) repo="$2"; shift 2 ;;',
@@ -706,10 +871,61 @@ class AutoresearchRuntimeControllerTest(AutoresearchScriptsTestBase):
             status = self.wait_for_runtime_status(tmpdir, {"needs_human"})
             self.assertEqual(status["reason"], "blocked")
             prompt_text = prompt_path.read_text(encoding="utf-8")
+            codex_args = args_path.read_text(encoding="utf-8")
             self.assertIn("$codex-autoresearch", prompt_text)
             self.assertIn("Reduce failures in this repo", prompt_text)
+            self.assertIn("--dangerously-bypass-approvals-and-sandbox", codex_args)
+            self.assertNotIn("--full-auto", codex_args)
             self.assertTrue(results_path.exists())
             self.assertTrue(state_path.exists())
+
+    def test_runtime_controller_honors_workspace_write_execution_policy_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            fake_codex_path = tmpdir / "fake-codex"
+            args_path = tmpdir / ".codex-args.txt"
+
+            self.create_launch_manifest(
+                tmpdir,
+                execution_policy="workspace_write",
+            )
+            self.write_fake_codex(
+                fake_codex_path,
+                body_lines=[
+                    'if [[ "${1:-}" != "exec" ]]; then',
+                    '  echo "expected codex exec" >&2',
+                    "  exit 64",
+                    "fi",
+                    "shift",
+                    f'args_path="{args_path}"',
+                    'printf "%s\\n" "$@" >"$args_path"',
+                    "cat >/dev/null",
+                    f'python_bin="{sys.executable}"',
+                    f'init_script="{SCRIPTS_DIR / "autoresearch_init_run.py"}"',
+                    f'record_script="{SCRIPTS_DIR / "autoresearch_record_iteration.py"}"',
+                    'if [[ ! -f "research-results.tsv" ]]; then',
+                    '  "$python_bin" "$init_script" --results-path research-results.tsv --state-path autoresearch-state.json --mode loop --goal "Reduce failures" --scope "src/**/*.py" --metric-name "failure count" --direction lower --verify "pytest -q" --execution-policy workspace_write --baseline-metric 10 --baseline-commit a1b2c3d --baseline-description "baseline failures"',
+                    "fi",
+                    '  "$python_bin" "$record_script" --results-path research-results.tsv --state-path autoresearch-state.json --status blocked --description "validation complete"',
+                ],
+            )
+
+            self.run_script(
+                "autoresearch_runtime_ctl.py",
+                "start",
+                "--repo",
+                str(tmpdir),
+                "--codex-bin",
+                str(fake_codex_path),
+                "--sleep-seconds",
+                "0",
+                "--max-stagnation",
+                "2",
+            )
+            self.wait_for_runtime_status(tmpdir, {"needs_human"})
+            codex_args = args_path.read_text(encoding="utf-8")
+            self.assertIn("--full-auto", codex_args)
+            self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", codex_args)
 
     def test_runtime_controller_retries_preinit_failures_then_stops(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

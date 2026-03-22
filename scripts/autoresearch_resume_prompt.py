@@ -6,13 +6,17 @@ from pathlib import Path
 
 from autoresearch_helpers import (
     AutoresearchError,
+    format_repo_target_label,
+    repo_targets_from_config,
     read_launch_manifest,
+    results_repo_root,
     resolve_repo_managed_path,
 )
 from autoresearch_launch_gate import evaluate_launch_context
 
 
 OPTIONAL_CONFIG_FIELDS = (
+    ("execution_policy", "Execution policy"),
     ("guard", "Guard"),
     ("iterations", "Iterations"),
     ("stop_condition", "Stop condition"),
@@ -33,6 +37,8 @@ def build_runtime_prompt(
     decision = launch_context["decision"]
     strategy = launch_context["resume_strategy"]
     config = launch_manifest["config"]
+    primary_repo = results_repo_root(results_path)
+    repo_targets = repo_targets_from_config(primary_repo, config)
     lines = [
         "$codex-autoresearch",
         "This repo is managed by the autoresearch runtime controller.",
@@ -43,11 +49,17 @@ def build_runtime_prompt(
         f"Original ask: {launch_manifest['original_goal']}",
         f"Mode: {launch_manifest.get('mode', 'loop')}",
         f"Goal: {config.get('goal', '')}",
-        f"Scope: {config.get('scope', '')}",
+        f"Scope: {repo_targets[0].scope}",
         f"Metric: {config.get('metric', '')}",
         f"Direction: {config.get('direction', '')}",
         f"Verify: {config.get('verify', '')}",
     ]
+    if len(repo_targets) > 1:
+        lines.append("Managed repos:")
+        for target in repo_targets:
+            lines.append(
+                f"- {format_repo_target_label(target, primary_repo)} ({target.role}) :: {target.scope}"
+            )
     for field_name, label in OPTIONAL_CONFIG_FIELDS:
         value = config.get(field_name)
         if value not in (None, "", []):

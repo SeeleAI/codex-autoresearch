@@ -94,7 +94,9 @@ class AutoresearchScriptsTestBase(unittest.TestCase):
         direction: str = "lower",
         verify: str = "python3 -c pass",
         guard: str | None = "python -m py_compile src",
+        execution_policy: str = "danger_full_access",
         stop_condition: str | None = None,
+        companion_repo_scopes: list[str] | None = None,
     ) -> dict[str, object]:
         args = [
             "autoresearch_runtime_ctl.py",
@@ -115,11 +117,15 @@ class AutoresearchScriptsTestBase(unittest.TestCase):
             direction,
             "--verify",
             verify,
+            "--execution-policy",
+            execution_policy,
         ]
         if guard is not None:
             args.extend(["--guard", guard])
         if stop_condition is not None:
             args.extend(["--stop-condition", stop_condition])
+        for value in companion_repo_scopes or []:
+            args.extend(["--companion-repo-scope", value])
         return self.run_script(*args)
 
     def write_sleeping_fake_codex(self, path: Path) -> None:
@@ -162,7 +168,9 @@ class AutoresearchScriptsTestBase(unittest.TestCase):
         direction: str = "lower",
         verify: str = "python3 -c pass",
         guard: str = "python -m py_compile src",
+        execution_policy: str = "danger_full_access",
         fresh_start: bool = False,
+        companion_repo_scopes: list[str] | None = None,
     ) -> dict[str, object]:
         args = [
             "autoresearch_runtime_ctl.py",
@@ -185,9 +193,13 @@ class AutoresearchScriptsTestBase(unittest.TestCase):
             verify,
             "--guard",
             guard,
+            "--execution-policy",
+            execution_policy,
             "--codex-bin",
             str(fake_codex_path),
         ]
+        for value in companion_repo_scopes or []:
+            args.extend(["--companion-repo-scope", value])
         if fresh_start:
             args.append("--fresh-start")
         return self.run_script(*args)

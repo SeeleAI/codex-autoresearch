@@ -8,10 +8,12 @@ from typing import Any
 
 from autoresearch_helpers import (
     AutoresearchError,
+    build_repo_targets,
     default_state_path,
     read_state_payload,
     read_runtime_payload,
     resolve_state_path,
+    serialize_repo_targets,
     utc_now,
     write_json_atomic,
 )
@@ -20,7 +22,8 @@ from autoresearch_lessons import append_summary_lesson_if_needed, lessons_path_f
 
 
 DEFAULT_RESULTS_PATH = "research-results.tsv"
-DEFAULT_CODEX_ARGS = ["--full-auto"]
+DEFAULT_EXECUTION_POLICY = "danger_full_access"
+EXECUTION_POLICY_CHOICES = ("workspace_write", "danger_full_access")
 DEFAULT_HEALTH_MIN_FREE_MB = 500
 
 
@@ -98,9 +101,17 @@ def append_completion_summary_if_possible(
 
 
 def manifest_config_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    primary_repo = resolve_repo_path(args.repo)
+    repo_targets = build_repo_targets(
+        primary_repo=primary_repo,
+        primary_scope=args.scope,
+        companion_repo_scopes=getattr(args, "companion_repo_scope", []),
+    )
     return {
         "goal": args.goal,
-        "scope": args.scope,
+        "scope": repo_targets[0].scope,
+        "repos": serialize_repo_targets(repo_targets),
+        "execution_policy": getattr(args, "execution_policy", DEFAULT_EXECUTION_POLICY),
         "metric": args.metric_name,
         "direction": args.direction,
         "verify": args.verify,
@@ -112,6 +123,36 @@ def manifest_config_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "parallel_mode": args.parallel_mode,
         "web_search": args.web_search,
     }
+
+
+def codex_args_for_execution_policy(
+    execution_policy: str | None,
+    *,
+    extra_args: list[str] | None = None,
+) -> list[str]:
+    policy = execution_policy or DEFAULT_EXECUTION_POLICY
+    if policy not in EXECUTION_POLICY_CHOICES:
+        raise AutoresearchError(
+            f"Unsupported execution policy: {policy!r}. "
+            f"Expected one of: {', '.join(EXECUTION_POLICY_CHOICES)}"
+        )
+
+    extras = list(extra_args or [])
+    conflicting_flags = {
+        "--full-auto",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--yolo",
+    }
+    for value in extras:
+        if value in conflicting_flags:
+            raise AutoresearchError(
+                "Execution policy is configured separately; do not pass sandbox-selection "
+                f"flags through --codex-arg ({value!r})."
+            )
+
+    if policy == "workspace_write":
+        return ["--full-auto", *extras]
+    return ["--dangerously-bypass-approvals-and-sandbox", *extras]
 
 
 def destructive_rollback_approved(launch_manifest: dict[str, Any]) -> bool:

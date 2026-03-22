@@ -11,14 +11,18 @@ from autoresearch_helpers import (
     append_rows,
     improvement,
     make_row,
+    normalize_repo_commit_map,
     parse_decimal,
     parse_results_log,
+    repo_commit_map_for_targets,
+    repo_targets_from_config,
     require_consistent_state,
     resolve_state_path_for_log,
+    results_repo_root,
     write_json_atomic,
 )
 from autoresearch_lessons import append_iteration_lesson, lessons_path_from_results
-from autoresearch_preflight import evaluate_repo_preflight
+from autoresearch_preflight import evaluate_managed_repos_preflight
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--batch-file",
         required=True,
-        help="JSON array of worker results. Each item needs worker_id, description, and optionally commit, metric, guard, status, diff_size.",
+        help="JSON array of worker results. Each item needs worker_id, description, and optionally commit, repo_commits, metric, guard, status, diff_size.",
     )
     return parser
 
@@ -74,14 +78,14 @@ def main() -> int:
         parsed=parsed,
     )
     config = dict(payload.get("config", {}))
-    repo = repo_hint or Path.cwd().resolve()
-    preflight = evaluate_repo_preflight(
-        repo=repo,
+    repo = results_repo_root(results_path)
+    preflight = evaluate_managed_repos_preflight(
+        primary_repo=repo,
         results_path=results_path,
         state_path_arg=args.state_path,
         verify_command=str(config.get("verify", "")),
-        scope_text=str(config.get("scope") or ""),
         commit_phase="prebatch",
+        repo_targets=repo_targets_from_config(repo, config),
         include_health=True,
         rollback_policy=None,
         destructive_approved=False,
@@ -96,6 +100,7 @@ def main() -> int:
     current_metric = reconstructed["current_metric"]
     candidates: list[dict[str, object]] = []
     worker_records: list[dict[str, object]] = []
+    repo_targets = repo_targets_from_config(repo, config)
 
     for item in batch:
         if not isinstance(item, dict):
@@ -133,6 +138,7 @@ def main() -> int:
             {
                 "worker_id": worker_id,
                 "commit": commit,
+                "repo_commits": normalize_repo_commit_map(item.get("repo_commits")),
                 "metric": metric,
                 "guard": guard,
                 "description": description,
@@ -210,6 +216,16 @@ def main() -> int:
             f"[PARALLEL batch] selected worker-{winner['worker_id']}: {winner['description']}"
         )
         last_trial_commit = winner_commit
+        last_trial_repo_commits = repo_commit_map_for_targets(
+            repo_targets=repo_targets,
+            primary_commit=winner_commit,
+            repo_commit_specs=[
+                f"{path}={commit}"
+                for path, commit in normalize_repo_commit_map(winner.get("repo_commits")).items()
+            ],
+            existing=payload["state"].get("last_trial_repo_commits")
+            or payload["state"].get("last_repo_commits"),
+        )
     elif best_completed_record is not None:
         main_metric = best_completed_record["metric"]
         main_guard = str(best_completed_record["guard"])
@@ -219,6 +235,21 @@ def main() -> int:
             f"{best_completed_record['description']}"
         )
         last_trial_commit = str(best_completed_record["commit"])
+        last_trial_repo_commits = repo_commit_map_for_targets(
+            repo_targets=repo_targets,
+            primary_commit=last_trial_commit,
+            repo_commit_specs=[
+                f"{path}={commit}"
+                for path, commit in normalize_repo_commit_map(best_completed_record.get("repo_commits")).items()
+            ],
+            existing=payload["state"].get("last_trial_repo_commits")
+            or payload["state"].get("last_repo_commits"),
+        )
+    else:
+        last_trial_repo_commits = normalize_repo_commit_map(
+            payload["state"].get("last_trial_repo_commits")
+            or payload["state"].get("last_repo_commits")
+        )
 
     worker_rows: list[dict[str, str]] = []
     selected_worker_id = None if winner is None else str(winner["worker_id"])
@@ -257,6 +288,7 @@ def main() -> int:
         commit=trial_commit,
         direction=direction,
         next_iteration=next_iteration,
+        repo_commit_map=last_trial_repo_commits,
     )
     write_json_atomic(state_path, final_payload)
     append_iteration_lesson(

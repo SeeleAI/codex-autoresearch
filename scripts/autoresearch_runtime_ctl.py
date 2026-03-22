@@ -13,6 +13,8 @@ from autoresearch_helpers import (
 from autoresearch_runtime_common import (
     DEFAULT_HEALTH_MIN_FREE_MB,
     DEFAULT_RESULTS_PATH,
+    DEFAULT_EXECUTION_POLICY,
+    EXECUTION_POLICY_CHOICES,
     resolve_repo_path,
     resolve_repo_relative,
 )
@@ -34,10 +36,22 @@ def add_manifest_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--mode", default="loop")
     parser.add_argument("--goal", required=True)
     parser.add_argument("--scope", required=True)
+    parser.add_argument(
+        "--companion-repo-scope",
+        action="append",
+        default=[],
+        help="Allow edits in a companion repo using PATH=SCOPE. May be repeated.",
+    )
     parser.add_argument("--metric-name", required=True)
     parser.add_argument("--direction", required=True, choices=["lower", "higher"])
     parser.add_argument("--verify", required=True)
     parser.add_argument("--guard")
+    parser.add_argument(
+        "--execution-policy",
+        choices=EXECUTION_POLICY_CHOICES,
+        default=DEFAULT_EXECUTION_POLICY,
+        help="How nested Codex sessions should execute. Defaults to danger_full_access.",
+    )
     parser.add_argument("--iterations", type=int)
     parser.add_argument("--run-tag")
     parser.add_argument("--stop-condition")

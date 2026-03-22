@@ -233,6 +233,87 @@ class AutoresearchParallelRetentionTest(AutoresearchScriptsTestBase):
             self.assertEqual(lessons[0]["outcome"], "keep")
             self.assertEqual(lessons[0]["iteration"], "1")
 
+    def test_parallel_batch_keep_updates_multi_repo_commit_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            companion = root / "companion"
+            primary.mkdir()
+            companion.mkdir()
+            results_path = primary / "research-results.tsv"
+            state_path = primary / "autoresearch-state.json"
+            batch_path = root / "batch.json"
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Coordinate two repos",
+                "--scope",
+                "src/",
+                "--companion-repo-scope",
+                f"{companion}=lib/",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "python3 -c pass",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "base111",
+                "--repo-commit",
+                f"{companion}=comp111",
+                "--baseline-description",
+                "baseline failures",
+                "--parallel-mode",
+                "parallel",
+            )
+            batch_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "worker_id": "a",
+                            "commit": "keep222",
+                            "repo_commits": {
+                                str(companion.resolve()): "comp222",
+                            },
+                            "metric": 7,
+                            "guard": "pass",
+                            "description": "coordinated improvement",
+                            "diff_size": 3,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            self.run_script(
+                "autoresearch_select_parallel_batch.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--batch-file",
+                str(batch_path),
+            )
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["state"]["last_repo_commits"],
+                {
+                    str(primary.resolve()): "keep222",
+                    str(companion.resolve()): "comp222",
+                },
+            )
+            self.assertEqual(state["state"]["last_trial_repo_commits"], state["state"]["last_repo_commits"])
+
     def test_parallel_batch_blocks_on_unexpected_worktree_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -523,4 +604,3 @@ class AutoresearchParallelRetentionTest(AutoresearchScriptsTestBase):
             self.assertEqual(state["state"]["best_metric"], 8)
             self.assertEqual(state["state"]["best_iteration"], 1)
             self.assertEqual(state["state"]["last_commit"], "keep001")
-
