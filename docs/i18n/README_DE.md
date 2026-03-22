@@ -226,7 +226,7 @@ Codex leitet alles aus Ihrem Satz und Ihrem Repository ab. Sie schreiben keine K
 | Guard (optional) | Schlaegt vor, wenn Regressionsrisiko besteht | npm test |
 
 Vor dem Start zeigt Codex Ihnen immer, was es gefunden hat, und bittet um Bestaetigung.
-Mindestens eine Runde Bestaetigung, bis zu fuenf bei Bedarf. Dann sagen Sie "go" und koennen sich zuruecklehnen.
+Mindestens eine Runde Bestaetigung, bis zu fuenf bei Bedarf. Danach waehlen Sie `foreground` oder `background` und sagen "go". In `foreground` laeuft die Iteration in der aktuellen Sitzung weiter; in `background` wird sie an den losgeloesten Runtime-Controller uebergeben, sodass Sie sich zuruecklehnen koennen.
 Fuer wirklich unbeaufsichtigte Laeufe sollten Sie Codex CLI mit Freigabe-/Sandbox-Einstellungen starten, die `git commit` oder `git revert` nicht unterbrechen. In einem wegwerfbaren oder anderweitig vertrauenswuerdigen Repository ist es am einfachsten, Codex weitergehende Berechtigungen zu geben.
 
 ### Doppelte Verifikation
@@ -262,11 +262,14 @@ Codex: 47 `any` in src/**/*.ts gefunden.
        - Verifikation: grep-Zaehlung, Schutz: tsc --noEmit
 
        Zu bestaetigen:
+       - Laufmodus: foreground oder background?
        - Bis auf null laufen lassen, oder auf N Iterationen begrenzen?
 
-       Antworten Sie "go" zum Starten.
+       Waehlen Sie zuerst einen Laufmodus und antworten Sie dann mit "go".
 
-Du:    Go, die ganze Nacht.
+Du:    Background, go. Die ganze Nacht.
+
+Codex: Starte den background-Lauf. Zuerst die Ausgangsbasis, dann die losgeloesten Iterationen.
 ```
 
 ### plan
@@ -324,12 +327,13 @@ Codex: Ich sehe 12 Fehlschlaege in tests/.
        - Aktuell: 12 Fehlschlaege
 
        Zu bestaetigen:
+       - Laufmodus: foreground oder background?
        - Soll ich auch ruff als Schutz gegen Lint-Probleme verwenden?
        - Alles reparieren oder zuerst auf ein bestimmtes Modul konzentrieren?
 
-       Antworten Sie "go" zum Starten.
+       Waehlen Sie zuerst einen Laufmodus und antworten Sie dann mit "go".
 
-Du:    Alles reparieren, ja mit ruff als Schutz. Go.
+Du:    Foreground, go. Alles reparieren, ja mit ruff als Schutz.
 ```
 
 ### security
@@ -437,7 +441,7 @@ Siehe `references/parallel-experiments-protocol.md`.
 
 ## Sitzungswiederaufnahme
 
-Wenn Codex in einem interaktiven Modus einen zuvor unterbrochenen verwalteten Lauf erkennt, kann es vom letzten konsistenten Zustand fortfahren, anstatt von vorne zu beginnen. Die primaere Wiederherstellungsquelle ist `autoresearch-state.json`, ein kompakter Zustandssnapshot, der bei jeder Iteration atomar aktualisiert wird. Im Modus `exec` liegt der Zustand nur in einer temporaeren Datei unter `/tmp/codex-autoresearch-exec/...` und muss vom `exec`-Workflow vor dem Beenden explizit entfernt werden. Eine direkte Wiederaufnahme ueber den entkoppelten Laufzeit-Controller setzt ein vorhandenes `autoresearch-launch.json` voraus; ohne dieses bestaetigte Start-Manifest folgt der Lauf dem normalen Startfluss.
+Wenn Codex in einem interaktiven Modus einen zuvor unterbrochenen Lauf erkennt, kann es vom letzten konsistenten Zustand fortfahren, anstatt von vorne zu beginnen. Die primaere Wiederherstellungsquelle ist `autoresearch-state.json`, ein kompakter Zustandssnapshot, der bei jeder Iteration atomar aktualisiert wird. Im Modus `exec` liegt der Zustand nur in einer temporaeren Datei unter `/tmp/codex-autoresearch-exec/...` und muss vom `exec`-Workflow vor dem Beenden explizit entfernt werden. `foreground` setzt direkt mit `research-results.tsv` und `autoresearch-state.json` fort; `background` braucht fuer die direkte Wiederaufnahme weiterhin ein vorhandenes `autoresearch-launch.json`.
 
 Wiederherstellungsprioritaet fuer interaktive Modi:
 
@@ -515,14 +519,16 @@ Diese Zustandsartefakte werden von den mit dem Skill gebuendelten Helper-Skripte
 
 Fuer Menschen gibt es jetzt nur noch einen einzigen Haupteinstieg: **`$codex-autoresearch`**.
 
-- Beim ersten interaktiven Lauf beschreiben Sie das Ziel natuerlich, beantworten die Rueckfragen und antworten dann mit `go`
-- Nach `go` schreibt Codex automatisch `autoresearch-launch.json` und startet die entkoppelte Laufzeitsteuerung
+- Beim ersten interaktiven Lauf beschreiben Sie das Ziel natuerlich, beantworten die Rueckfragen, waehlen ausdruecklich `foreground` oder `background` und antworten dann mit `go`
+- In `foreground` bleibt Codex in derselben Sitzung, iteriert live weiter und schreibt nur `research-results.tsv`, `autoresearch-state.json` und Lessons
+- In `background` schreibt Codex automatisch `autoresearch-launch.json` und startet die entkoppelte Laufzeitsteuerung
+- `foreground` und `background` teilen sich dasselbe Loop-Protokoll, dieselbe Metriksemantik und dieselben Repo-/Scope-Regeln, sind fuer denselben Repo-/Run-Kontext aber gegenseitig ausschliessend; lassen Sie nicht beide Modi gleichzeitig dieselben Primaer-Repo-Artefakte schreiben
 - Einzelne Repositories bleiben der Standardfall; dann gilt der deklarierte Scope nur fuer das Primaer-Repository, das die Run-Control-Artefakte traegt
 - Wenn das Experiment mehrere Repositories umfasst, kann das bestaetigte Launch-Manifest auch Companion-Repositories mit jeweils eigenem Scope enthalten. Die Runtime-Preflight-Pruefung deckt dann alle verwalteten Repositories ab, waehrend `research-results.tsv`, `autoresearch-state.json` und die Runtime-Control-Artefakte im Primaer-Repository verankert bleiben
 - In diesem Modell bleibt die TSV-Spalte `commit` beim Commit des Primaer-Repositories; die Commit-Provenienz der Companion-Repositories steht stattdessen in `autoresearch-state.json`
-- Jeder weitere verwaltete Laufzyklus startet eine nicht-interaktive `codex exec`-Sitzung und uebergibt den Runtime-Prompt ueber stdin
-- Das Launch-Manifest speichert ausserdem die `execution_policy`; dieses Skill verwendet standardmaessig `danger_full_access`, daher laufen verwaltete Zyklen normalerweise mit `--dangerously-bypass-approvals-and-sandbox`, solange nicht ausdruecklich `workspace_write` angefordert wird
-- Spaetere Anfragen wie `status`, `stop` oder `resume` laufen weiterhin ueber dasselbe `$codex-autoresearch`
+- Jeder weitere verwaltete `background`-Laufzyklus startet eine nicht-interaktive `codex exec`-Sitzung und uebergibt den Runtime-Prompt ueber stdin
+- `execution_policy` gilt nur fuer Pfade, die verschachtelte Codex-Sitzungen starten, also fuer `background` und `exec`; dieses Skill verwendet standardmaessig `danger_full_access`
+- Spaetere Anfragen wie `status`, `stop` oder `resume` laufen weiterhin ueber dasselbe `$codex-autoresearch`; `status/stop` gelten nur fuer `background`
 - `Mode: exec` bleibt der erweiterte Pfad fuer CI und voll spezifizierte Automatisierung
 
 Direkte Steuerbefehle bleiben fuer Skripting oder das Debugging der Laufzeit verfuegbar:
@@ -635,7 +641,7 @@ codex-autoresearch/
 
 **Lernt es ueber Laeufe hinweg?** Ja. Erkenntnisse werden nach jedem `keep`, nach jedem `pivot` und beim Abschluss der Laufzeit ohne aktuelle Erkenntnis extrahiert. Die Erkenntnisdatei bleibt ueber Sitzungen hinweg erhalten; `exec` liest nur vorhandene Erkenntnisse.
 
-**Kann es nach einer Unterbrechung fortfahren?** Ja, sofern es sich um einen verwalteten Lauf mit `autoresearch-launch.json`, `research-results.tsv` und `autoresearch-state.json` handelt. Fehlt der bestaetigte Startzustand, beginnen Sie ueber den normalen Startfluss neu.
+**Kann es nach einer Unterbrechung fortfahren?** Ja. `foreground` setzt mit `research-results.tsv` und `autoresearch-state.json` fort; `background` benoetigt zusaetzlich `autoresearch-launch.json`. Fehlt der bestaetigte Startzustand, beginne einen neuen `background`-Lauf ueber den normalen Startfluss.
 
 **Kann es im Web suchen?** Ja, wenn es nach mehreren Strategiewechseln feststeckt. Websuche-Ergebnisse werden als Hypothesen behandelt und mechanisch verifiziert.
 

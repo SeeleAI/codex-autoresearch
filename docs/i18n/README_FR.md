@@ -72,13 +72,16 @@ Codex: J'ai trouve 47 occurrences de `any` dans src/**/*.ts.
        - Verification : comptage grep + tsc --noEmit comme garde
 
        A confirmer :
+       - Mode d'execution : foreground ou background ?
        - Continuer jusqu'a zero, ou limiter a N iterations ?
 
-       Repondez "go" pour demarrer, ou dites-moi ce qu'il faut changer.
+       Choisissez un mode d'execution puis repondez "go" pour demarrer,
+       ou dites-moi ce qu'il faut changer.
 
-Vous:  Go, laissez tourner toute la nuit.
+Vous:  Background, go. Laissez tourner toute la nuit.
 
-Codex: Demarrage -- base de reference : 47. Iteration continue jusqu'a interruption.
+Codex: Demarrage en background -- base de reference : 47.
+       Le runtime detache itere deja.
 ```
 
 Chaque amelioration s'accumule. Chaque echec est annule. Tout est journalise.
@@ -101,89 +104,72 @@ L'autoresearch de Karpathy a prouve qu'une boucle simple -- modifier, verifier, 
 
 ## Architecture
 
+Le schema ci-dessous montre d'abord le lancement interactif, puis le noyau de boucle partage. Avant d'entrer dans la boucle, Codex sonde l'environnement, verifie s'il existe une session recuperable, confirme la configuration et impose un choix explicite entre `foreground` et `background`.
+
 ```
-              +---------------------+
-              | Sonde d'environnement|  <-- Phase 0 : detecter CPU/GPU/RAM/toolchains
-              +---------+-----------+
-                        |
-              +---------v-----------+
-              | Reprise de session ? |  <-- verifier les artefacts d'execution precedente
-              +---------+-----------+
-                        |
-              +---------v-----------+
-              |  Lire le contexte   |  <-- lire portee + fichier de lecons
-              +---------+-----------+
-                        |
-              +---------v-----------+
-              |  Etablir la base    |  <-- iteration #0
-              +---------+-----------+
-                        |
-         +--------------v--------------+
-         |                             |
-         |  +----------------------+   |
-         |  | Choisir une hypothese|   |  <-- consulter lecons + perspectives
-         |  | (ou N en parallele)  |   |      filtrer par environnement
-         |  +---------+------------+   |
-         |            |                |
-         |  +---------v------------+   |
-         |  | Faire UN changement  |   |
-         |  +---------+------------+   |
-         |            |                |
-         |  +---------v------------+   |
-         |  | git commit           |   |
-         |  +---------+------------+   |
-         |            |                |
-         |  +---------v------------+   |
-         |  | Run Verify + Guard   |   |
-         |  +---------+------------+   |
-         |            |                |
-         |        ameliore ?           |
-         |       /         \           |
-         |     yes          no         |
-         |     /              \        |
-         |  +-v------+   +----v-----+ |
-         |  |  KEEP  |   | REVERT   | |
-         |  |+lesson |   +----+-----+ |
-         |  +--+-----+        |       |
-         |      \            /         |
-         |   +--v----------v---+      |
-         |   | Journaliser le  |      |
-         |   |    resultat     |      |
-         |   +--------+--------+      |
-         |            |               |
-         |   +--------v--------+      |
-         |   | Controle de sante|      |  <-- disque, git, sante de la verification
-         |   +--------+--------+      |
-         |            |               |
-         |     3+ rejets ?            |
-         |    /             \         |
-         |  no              yes       |
-         |  |          +----v-----+   |
-         |  |          | REFINE / |   |  <-- escalade du protocole pivot
-         |  |          | PIVOT    |   |
-         |  |          +----+-----+   |
-         |  |               |         |
-         +--+------+--------+         |
-         |         (repeter)          |
-         +----------------------------+
+              +----------------------+
+              | Sonde d'environnement|  <-- detecter CPU/GPU/RAM/toolchains
+              +----------+-----------+
+                         |
+              +----------v-----------+
+              | Reprise de session ? |  <-- inspecter resultats/etat precedents
+              +----------+-----------+
+                         |
+              +----------v-----------+
+              | Lire le contexte     |  <-- scope + lecons + etat du repo
+              +----------+-----------+
+                         |
+              +----------v-----------+
+              | Confirmation wizard  |  <-- objectif/metrique/verify/guard
+              | + choix du mode      |      + foreground ou background
+              +----------+-----------+
+                         |
+               +---------+---------+
+               |                   |
+     +---------v--------+  +-------v---------+
+     | Execution en     |  | Execution en    |
+     | foreground       |  | background      |
+     | session courante |  | manifest + ctl  |
+     | sans runtime     |  | runtime detache |
+     +---------+--------+  +-------+---------+
+               |                   |
+               +---------+---------+
+                         |
+              +----------v-----------+
+              | Noyau de boucle      |
+              | partage              |
+              | baseline -> change   |
+              | -> verify/guard ->   |
+              | keep/discard/log     |
+              +----------+-----------+
+                         |
+              +----------v-----------+
+              | Resultat superviseur |  <-- continuer / stop / needs_human
+              +----------------------+
 ```
 
-La boucle tourne jusqu'a interruption (sans limite) ou exactement N iterations (limitee via `Iterations: N`).
+Foreground et background partagent exactement le meme protocole experimental. La seule difference est l'endroit ou la boucle s'execute : dans la session Codex courante pour foreground, ou dans le controleur detache pour background. Les deux tournent jusqu'a interruption (sans limite) ou pendant exactement N iterations (bornees via `Iterations: N`).
 
 **Pseudocode :**
 
 ```
-PHASE 0: Sonder l'environnement, verifier la reprise de session
+PHASE 0: Sonder l'environnement, verifier s'il existe une session recuperable
 PHASE 1: Lire le contexte + le fichier de lecons
+PHASE 2: Confirmer la configuration + choisir foreground ou background
 
-LOOP (infini ou N fois) :
+SI foreground :
+  executer la boucle dans la session Codex courante
+SINON background :
+  ecrire autoresearch-launch.json et demarrer le runtime detache
+
+BOUCLE PARTAGEE (infini ou N fois) :
   1. Examiner l'etat actuel + historique git + journal des resultats + lecons
   2. Choisir UNE hypothese (appliquer les perspectives, filtrer par environnement)
      -- ou N hypotheses si le mode parallele est actif
   3. Effectuer UN changement atomique
   4. git commit (avant verification)
   5. Lancer la verification mecanique + guard
-  6. Ameliore -> conserver (extraire une lecon). Degrade -> git reset. Crash -> reparer ou ignorer.
+  6. Ameliore -> conserver (extraire une lecon). Degrade -> strategie de rollback approuvee. Crash -> reparer ou ignorer.
   7. Journaliser le resultat
   8. Controle de sante (disque, git, sante de la verification)
   9. 3+ rejets consecutifs -> REFINE ; 5+ -> PIVOT ; 2 PIVOTs -> recherche web
@@ -227,7 +213,7 @@ Codex infere tout a partir de votre phrase et de votre depot. Vous n'ecrivez jam
 | Garde (optionnel) | Suggere si un risque de regression existe | npm test |
 
 Avant de demarrer, Codex vous montre toujours ce qu'il a trouve et demande confirmation.
-Un minimum d'un echange, jusqu'a cinq si necessaire. Ensuite vous dites "go" et vous pouvez partir.
+Un minimum d'un echange, jusqu'a cinq si necessaire. Ensuite vous choisissez `foreground` ou `background` puis vous dites "go". En `foreground`, l'iteration reste dans la session actuelle ; en `background`, elle est confiee au runtime detache pour que vous puissiez partir.
 Pour un vrai fonctionnement sans surveillance, lancez Codex CLI avec des reglages d'approbation / sandbox qui n'interrompront pas `git commit` ou `git revert`. Dans un depot jetable ou autrement fiable, donner plus de permissions a Codex est l'option la plus simple.
 
 ### Verification a double porte
@@ -263,11 +249,14 @@ Codex: 47 `any` trouves dans src/**/*.ts.
        - Verification : comptage grep, Garde : tsc --noEmit
 
        A confirmer :
+       - Mode d'execution : foreground ou background ?
        - Continuer jusqu'a zero, ou limiter a N iterations ?
 
-       Repondez "go" pour demarrer.
+       Choisissez un mode d'execution puis repondez "go" pour demarrer.
 
-Vous:  Go, toute la nuit.
+Vous:  Background, go. Toute la nuit.
+
+Codex: Demarrage en background. D'abord la base de reference, puis les iterations detachees.
 ```
 
 ### plan
@@ -325,12 +314,13 @@ Codex: Je vois 12 echecs dans tests/.
        - Actuel : 12 echecs
 
        A confirmer :
+       - Mode d'execution : foreground ou background ?
        - Dois-je aussi utiliser ruff comme garde contre les problemes de lint ?
        - Tout reparer ou se concentrer d'abord sur un module specifique ?
 
-       Repondez "go" pour demarrer.
+       Choisissez un mode d'execution puis repondez "go" pour demarrer.
 
-Vous:  Tout reparer, oui avec ruff en garde. Go.
+Vous:  Foreground, go. Tout reparer, oui avec ruff en garde.
 ```
 
 ### security
@@ -438,7 +428,7 @@ Voir `references/parallel-experiments-protocol.md`.
 
 ## Reprise de session
 
-Si Codex detecte une execution geree precedemment interrompue en mode interactif, il peut reprendre depuis le dernier etat coherent au lieu de recommencer. La source de recuperation principale est `autoresearch-state.json`, un instantane d'etat compact mis a jour atomiquement a chaque iteration. En mode `exec`, l'etat n'existe que dans un fichier temporaire sous `/tmp/codex-autoresearch-exec/...` et le workflow `exec` doit le nettoyer explicitement avant la sortie. La reprise directe via le controleur d'execution detache exige un `autoresearch-launch.json` deja present ; si cet etat de lancement confirme manque, il faut repasser par le flux normal de lancement.
+Si Codex detecte une execution interactive precedemment interrompue, il peut reprendre depuis le dernier etat coherent au lieu de recommencer. La source de recuperation principale est `autoresearch-state.json`, un instantane d'etat compact mis a jour atomiquement a chaque iteration. En mode `exec`, l'etat n'existe que dans un fichier temporaire sous `/tmp/codex-autoresearch-exec/...` et le workflow `exec` doit le nettoyer explicitement avant la sortie. `foreground` reprend directement via `research-results.tsv` et `autoresearch-state.json`; `background` exige toujours un `autoresearch-launch.json` deja present.
 
 Priorite de recuperation en mode interactif :
 
@@ -516,14 +506,16 @@ Ces artefacts d'etat sont geres par les helper scripts fournis avec le skill. Ap
 
 Pour les utilisateurs humains, il n'y a maintenant plus qu'un seul point d'entree principal : **`$codex-autoresearch`**.
 
-- Lors du premier lancement interactif, decrivez naturellement l'objectif, repondez aux questions de confirmation, puis repondez `go`
-- Apres `go`, Codex ecrit `autoresearch-launch.json` et demarre automatiquement le controleur d'execution detache
+- Lors du premier lancement interactif, decrivez naturellement l'objectif, repondez aux questions de confirmation, choisissez explicitement `foreground` ou `background`, puis repondez `go`
+- En `foreground`, Codex reste dans la session courante, continue la boucle en direct et n'ecrit que `research-results.tsv`, `autoresearch-state.json` et les lessons
+- En `background`, Codex ecrit `autoresearch-launch.json` et demarre automatiquement le controleur d'execution detache
+- `foreground` et `background` partagent le meme protocole de boucle, la meme semantique de metrique et les memes regles de repo/scope, mais ils sont mutuellement exclusifs pour un meme repo/run ; n'utilisez pas les deux modes en meme temps sur les memes artefacts du depot primaire
 - Les executions sur un seul depot restent le cas par defaut ; dans ce cas, le scope declare ne s'applique qu'au depot primaire qui porte les artefacts de controle
 - Si l'experience couvre plusieurs depots, le manifeste de lancement confirme peut aussi declarer des depots companions avec un scope distinct pour chacun. Le preflight du runtime couvre alors tous les depots geres, tandis que `research-results.tsv`, `autoresearch-state.json` et les artefacts de controle restent ancres dans le depot primaire
 - Dans ce modele, la colonne `commit` du TSV continue de suivre uniquement le commit du depot primaire ; la provenance des commits des depots companions est conservee dans `autoresearch-state.json`
-- Chaque cycle gere ensuite une session `codex exec` non interactive, avec le prompt runtime transmis via stdin
-- Le launch manifest enregistre aussi une `execution_policy` ; ce skill utilise `danger_full_access` par defaut, donc les cycles geres s'executent normalement avec `--dangerously-bypass-approvals-and-sandbox`, sauf demande explicite de `workspace_write`
-- Les demandes ulterieures comme `status`, `stop` ou `resume` passent toujours par le meme `$codex-autoresearch`
+- Chaque cycle gere en `background` lance ensuite une session `codex exec` non interactive, avec le prompt runtime transmis via stdin
+- `execution_policy` ne s'applique qu'aux chemins qui lancent des sessions Codex imbriquees, donc `background` et `exec` ; ce skill utilise `danger_full_access` par defaut
+- Les demandes ulterieures comme `status`, `stop` ou `resume` passent toujours par le meme `$codex-autoresearch` ; `status/stop` ne valent que pour `background`
 - `Mode: exec` reste la voie avancee pour le CI ou l'automatisation entierement specifiee
 
 Les commandes directes de pilotage restent disponibles pour le scripting ou le debug de l'execution :
@@ -636,7 +628,7 @@ codex-autoresearch/
 
 **Apprend-il d'une execution a l'autre ?** Oui. Les lecons sont extraites apres chaque `keep`, apres chaque `pivot` et a la fin de l'execution geree lorsqu'aucune lecon recente n'existe. Le fichier de lecons persiste entre les sessions ; `exec` ne fait que lire les lecons existantes.
 
-**Peut-il reprendre apres une interruption ?** Oui, pour les executions gerees qui ont deja `autoresearch-launch.json`, `research-results.tsv` et `autoresearch-state.json`. Si l'etat de lancement confirme manque, relancez un nouveau run via le flux normal de lancement.
+**Peut-il reprendre apres une interruption ?** Oui. `foreground` reprend avec `research-results.tsv` et `autoresearch-state.json` ; `background` demande en plus `autoresearch-launch.json`. Si l'etat de lancement confirme manque, relance un nouveau run `background` via le flux normal de lancement.
 
 **Peut-il effectuer des recherches web ?** Oui, lorsqu'il est bloque apres plusieurs pivots strategiques. Les resultats de recherche web sont traites comme des hypotheses et verifies mecaniquement.
 
