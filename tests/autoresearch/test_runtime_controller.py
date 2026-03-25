@@ -36,6 +36,23 @@ class AutoresearchRuntimeControllerTest(AutoresearchScriptsTestBase):
             manifest = json.loads(Path(created["launch_path"]).read_text(encoding="utf-8"))
             self.assertEqual(manifest["config"]["required_stop_labels"], ["pto-isa", "shmem"])
 
+    def test_create_launch_manifest_persists_required_keep_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            created = self.create_launch_manifest(
+                tmpdir,
+                goal="Improve latency through the real backend",
+                metric_name="latency ms",
+                direction="lower",
+                verify="python eval.py",
+                required_keep_labels=["Real-Backend", "production-path", "real-backend"],
+            )
+            manifest = json.loads(Path(created["launch_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(
+                manifest["config"]["required_keep_labels"],
+                ["real-backend", "production-path"],
+            )
+
     def test_runtime_launch_command_atomically_creates_manifest_and_starts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)

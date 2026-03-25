@@ -8,10 +8,14 @@ from pathlib import Path
 from autoresearch_decision import apply_status_transition
 from autoresearch_helpers import (
     AutoresearchError,
+    append_description_suffix,
     append_rows,
+    evaluate_required_label_gate,
+    format_keep_gate_miss_suffix,
     improvement,
     make_row,
     normalize_repo_commit_map,
+    normalize_labels,
     parse_decimal,
     parse_results_log,
     repo_commit_map_for_targets,
@@ -101,6 +105,7 @@ def main() -> int:
 
     next_iteration = reconstructed["iteration"] + 1
     current_metric = reconstructed["current_metric"]
+    required_keep_labels = config.get("required_keep_labels", [])
     candidates: list[dict[str, object]] = []
     worker_records: list[dict[str, object]] = []
     repo_targets = repo_targets_from_config(repo, config)
@@ -117,6 +122,7 @@ def main() -> int:
         guard = str(item.get("guard", "-"))
         commit = str(item.get("commit", "-"))
         description = str(item["description"])
+        labels = normalize_labels(item.get("labels", []))
         metric = current_metric
         row_status = "crash" if status in {"crash", "timeout"} else "discard"
 
@@ -131,9 +137,22 @@ def main() -> int:
             metric = parse_decimal(item["metric"], f"worker {worker_id} metric")
             improved = guard == "pass" and improvement(metric, current_metric, direction)
             if improved:
-                row_status = "candidate"
-                item["metric_decimal"] = metric
-                candidates.append(item)
+                _, labels, missing_keep_labels = evaluate_required_label_gate(
+                    required_keep_labels,
+                    labels,
+                )
+                if missing_keep_labels:
+                    row_status = "discard"
+                    description = append_description_suffix(
+                        description,
+                        format_keep_gate_miss_suffix(missing_keep_labels),
+                    )
+                else:
+                    row_status = "candidate"
+                    item["metric_decimal"] = metric
+                    item["normalized_labels"] = labels
+                    item["normalized_description"] = description
+                    candidates.append(item)
             else:
                 row_status = "discard"
 
@@ -142,11 +161,12 @@ def main() -> int:
                 "worker_id": worker_id,
                 "commit": commit,
                 "repo_commits": normalize_repo_commit_map(item.get("repo_commits")),
-                "labels": item.get("labels", []),
+                "labels": labels,
                 "metric": metric,
                 "guard": guard,
                 "description": description,
                 "status": row_status,
+                "diff_size": item.get("diff_size"),
             }
         )
 
@@ -217,9 +237,10 @@ def main() -> int:
         main_metric = winner_metric
         main_guard = str(winner.get("guard", "pass"))
         main_description = (
-            f"[PARALLEL batch] selected worker-{winner['worker_id']}: {winner['description']}"
+            f"[PARALLEL batch] selected worker-{winner['worker_id']}: "
+            f"{winner.get('normalized_description', winner['description'])}"
         )
-        main_labels = winner.get("labels", [])
+        main_labels = winner.get("normalized_labels", winner.get("labels", []))
         last_trial_commit = winner_commit
         last_trial_repo_commits = repo_commit_map_for_targets(
             repo_targets=repo_targets,
@@ -232,6 +253,7 @@ def main() -> int:
             or payload["state"].get("last_repo_commits"),
         )
     elif best_completed_record is not None:
+        main_commit = str(best_completed_record["commit"])
         main_metric = best_completed_record["metric"]
         main_guard = str(best_completed_record["guard"])
         main_description = (
@@ -240,7 +262,7 @@ def main() -> int:
             f"{best_completed_record['description']}"
         )
         main_labels = best_completed_record.get("labels", [])
-        last_trial_commit = str(best_completed_record["commit"])
+        last_trial_commit = main_commit
         last_trial_repo_commits = repo_commit_map_for_targets(
             repo_targets=repo_targets,
             primary_commit=last_trial_commit,

@@ -8,9 +8,13 @@ from pathlib import Path
 from autoresearch_decision import apply_status_transition, requires_trial_commit
 from autoresearch_helpers import (
     AutoresearchError,
+    append_description_suffix,
     append_rows,
+    evaluate_required_label_gate,
+    format_keep_gate_miss_suffix,
     improvement,
     make_row,
+    normalize_labels,
     parse_decimal,
     parse_results_log,
     repo_commit_map_for_targets,
@@ -47,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--label",
         action="append",
         default=[],
-        help="Attach structured labels/tags to this iteration for stop gating and audit. May be repeated.",
+        help="Attach structured labels/tags to this iteration for keep/stop gating and audit. May be repeated.",
     )
     parser.add_argument(
         "--repo-commit",
@@ -73,6 +77,7 @@ def main() -> int:
     )
     next_iteration = reconstructed["iteration"] + 1
     current_metric = reconstructed["current_metric"]
+    config = dict(payload.get("config", {}))
 
     if args.status in {"crash", "no-op", "blocked", "refine", "pivot", "search"}:
         metric = current_metric if args.metric is None else parse_decimal(args.metric, "metric")
@@ -88,15 +93,30 @@ def main() -> int:
     if args.status == "keep" and not improvement(metric, current_metric, direction):
         raise AutoresearchError("Keep iterations must improve over the retained metric.")
 
+    normalized_labels = normalize_labels(args.label)
+    final_status = args.status
+    final_description = args.description
+    if args.status == "keep":
+        _, normalized_labels, missing_keep_labels = evaluate_required_label_gate(
+            config.get("required_keep_labels", []),
+            normalized_labels,
+        )
+        if missing_keep_labels:
+            final_status = "discard"
+            final_description = append_description_suffix(
+                final_description,
+                format_keep_gate_miss_suffix(missing_keep_labels),
+            )
+
     new_row = make_row(
         iteration=str(next_iteration),
         commit=args.commit,
         metric=metric,
         delta=metric - current_metric,
         guard=args.guard,
-        status=args.status,
-        description=args.description,
-        labels=args.label,
+        status=final_status,
+        description=final_description,
+        labels=normalized_labels,
     )
     append_rows(results_path, [new_row])
 
@@ -111,20 +131,20 @@ def main() -> int:
 
     final_payload = apply_status_transition(
         payload,
-        status=args.status,
+        status=final_status,
         metric=metric,
         commit=args.commit,
         direction=direction,
         next_iteration=next_iteration,
         repo_commit_map=repo_commit_map,
-        labels=args.label,
+        labels=normalized_labels,
     )
     write_json_atomic(state_path, final_payload)
 
     append_iteration_lesson(
         lessons_path=lessons_path_from_results(results_path),
         state_payload=final_payload,
-        status=args.status,
+        status=final_status,
         description=new_row["description"],
         iteration=next_iteration,
     )
@@ -133,7 +153,7 @@ def main() -> int:
         json.dumps(
             {
                 "iteration": next_iteration,
-                "status": args.status,
+                "status": final_status,
                 "retained_metric": final_payload["state"]["current_metric"],
                 "trial_metric": final_payload["state"]["last_trial_metric"],
                 "trial_labels": final_payload["state"].get("last_trial_labels", []),

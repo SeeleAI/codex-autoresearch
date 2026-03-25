@@ -23,6 +23,7 @@ Optional:
 - `Iterations`
 - `Run tag`
 - `Stop condition`
+- `Required keep labels` (when the run should only retain results from a specific mechanism, path, backend, or root-cause signal)
 - `Required stop labels` (when the goal has a structural or causal success requirement, not just a numeric threshold)
 - `Rollback policy` (required before launch if destructive rollback may be used)
 

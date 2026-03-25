@@ -83,6 +83,15 @@ def build_parser() -> argparse.ArgumentParser:
             "May be repeated."
         ),
     )
+    parser.add_argument(
+        "--required-keep-label",
+        action="append",
+        default=[],
+        help=(
+            "Require iteration labels before a numerically improved result can be retained as keep. "
+            "May be repeated."
+        ),
+    )
     parser.add_argument("--parallel-mode", choices=["serial", "parallel"], default="serial")
     parser.add_argument("--web-search", choices=["enabled", "disabled"], default="disabled")
     parser.add_argument("--environment-summary")
@@ -145,6 +154,10 @@ def main() -> int:
             if path.exists():
                 raise AutoresearchError(f"{path} already exists. Use --force after moving old artifacts.")
 
+    session_mode = args.session_mode
+    if args.mode != "exec" and session_mode is None:
+        session_mode = "foreground"
+
     baseline_metric = parse_decimal(args.baseline_metric, "baseline metric")
     comments = [f"# metric_direction: {args.direction}"]
     if args.environment_summary:
@@ -154,6 +167,30 @@ def main() -> int:
         comments.append(f"# run_tag: {args.run_tag}")
     comments.append(f"# parallel: {args.parallel_mode}")
     comments.append(f"# web_search: {args.web_search}")
+    comments.append(f"# goal: {args.goal}")
+    comments.append(f"# scope: {repo_targets[0].scope}")
+    comments.append(
+        "# repos_json: "
+        + json.dumps(serialize_repo_targets(repo_targets), sort_keys=True, separators=(",", ":"))
+    )
+    comments.append(f"# metric: {args.metric_name}")
+    comments.append(f"# verify: {args.verify}")
+    if args.guard:
+        comments.append(f"# guard: {args.guard}")
+    if args.iterations is not None:
+        comments.append(f"# iterations: {args.iterations}")
+    if args.stop_condition:
+        comments.append(f"# stop_condition: {args.stop_condition}")
+    if args.rollback_policy:
+        comments.append(f"# rollback_policy: {args.rollback_policy}")
+    if args.mode == "exec" or session_mode == "background":
+        comments.append(f"# execution_policy: {args.execution_policy}")
+    required_stop_labels = normalize_labels(args.required_stop_label)
+    if required_stop_labels:
+        comments.append(f"# required_stop_labels: {', '.join(required_stop_labels)}")
+    required_keep_labels = normalize_labels(args.required_keep_label)
+    if required_keep_labels:
+        comments.append(f"# required_keep_labels: {', '.join(required_keep_labels)}")
 
     baseline_row = make_row(
         iteration="0",
@@ -166,10 +203,6 @@ def main() -> int:
         labels=[],
     )
     write_results_log(results_path, comments, [baseline_row])
-
-    session_mode = args.session_mode
-    if args.mode != "exec" and session_mode is None:
-        session_mode = "foreground"
 
     config = {
         "goal": args.goal,
@@ -189,9 +222,10 @@ def main() -> int:
         config["session_mode"] = session_mode
     if args.mode == "exec" or session_mode == "background":
         config["execution_policy"] = args.execution_policy
-    required_stop_labels = normalize_labels(args.required_stop_label)
     if required_stop_labels:
         config["required_stop_labels"] = required_stop_labels
+    if required_keep_labels:
+        config["required_keep_labels"] = required_keep_labels
     summary = {
         "iteration": 0,
         "baseline_metric": baseline_metric,

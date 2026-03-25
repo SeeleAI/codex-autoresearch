@@ -388,6 +388,76 @@ def compare_summary_to_state(
     return mismatches
 
 
+def config_from_results_metadata(metadata: dict[str, str]) -> dict[str, Any]:
+    config: dict[str, Any] = {}
+
+    direction = metadata.get("metric_direction")
+    if direction in {"lower", "higher"}:
+        config["direction"] = direction
+
+    field_map = {
+        "goal": "goal",
+        "scope": "scope",
+        "metric": "metric",
+        "verify": "verify",
+        "guard": "guard",
+        "parallel": "parallel_mode",
+        "web_search": "web_search",
+        "stop_condition": "stop_condition",
+        "rollback_policy": "rollback_policy",
+        "execution_policy": "execution_policy",
+    }
+    for metadata_key, config_key in field_map.items():
+        value = metadata.get(metadata_key)
+        if value is not None and value != "":
+            config[config_key] = value
+
+    repos_json = metadata.get("repos_json")
+    if repos_json:
+        try:
+            repos = json.loads(repos_json)
+        except json.JSONDecodeError:
+            repos = None
+        if isinstance(repos, list):
+            normalized_repos: list[dict[str, str]] = []
+            for entry in repos:
+                if not isinstance(entry, dict):
+                    normalized_repos = []
+                    break
+                path = entry.get("path")
+                scope = entry.get("scope")
+                role = entry.get("role")
+                if not all(isinstance(value, str) and value.strip() for value in (path, scope, role)):
+                    normalized_repos = []
+                    break
+                normalized_repos.append(
+                    {
+                        "path": path.strip(),
+                        "scope": scope.strip(),
+                        "role": role.strip(),
+                    }
+                )
+            if normalized_repos:
+                config["repos"] = normalized_repos
+
+    iterations_text = metadata.get("iterations")
+    if iterations_text is not None and iterations_text.strip():
+        try:
+            config["iterations"] = int(iterations_text.strip())
+        except ValueError:
+            pass
+
+    required_stop_labels = normalize_labels(metadata.get("required_stop_labels"))
+    if required_stop_labels:
+        config["required_stop_labels"] = required_stop_labels
+
+    required_keep_labels = normalize_labels(metadata.get("required_keep_labels"))
+    if required_keep_labels:
+        config["required_keep_labels"] = required_keep_labels
+
+    return config
+
+
 def build_state_payload(
     *,
     mode: str,
@@ -432,6 +502,36 @@ def build_state_payload(
         payload["state"]["last_trial_repo_commits"] = deepcopy(last_trial_repo_commits)
     if supervisor is not None:
         payload["supervisor"] = deepcopy(supervisor)
+    return payload
+
+
+def rebuild_exec_state_payload_from_results(
+    *,
+    results_path: Path,
+    state_path: Path,
+    parsed: ParsedLog | None = None,
+) -> dict[str, Any]:
+    parsed = parsed or parse_results_log(results_path)
+    if parsed.metadata.get("mode") != "exec":
+        raise AutoresearchError(
+            "Cannot rebuild scratch state from a non-exec results log."
+        )
+
+    config = config_from_results_metadata(parsed.metadata)
+    direction = config.get("direction")
+    if direction not in {"lower", "higher"}:
+        raise AutoresearchError(
+            "Exec results log is missing metric_direction metadata needed to rebuild scratch state."
+        )
+
+    summary = log_summary(parsed, direction)
+    payload = build_state_payload(
+        mode="exec",
+        run_tag=parsed.metadata.get("run_tag") or "",
+        config=config,
+        summary=summary,
+    )
+    write_json_atomic(state_path, payload)
     return payload
 
 
@@ -509,7 +609,16 @@ def require_consistent_state(
     parsed: ParsedLog | None = None,
 ) -> tuple[ParsedLog, dict[str, Any], dict[str, Any], str]:
     parsed = parsed or parse_results_log(results_path)
-    state_payload = read_state_payload(state_path)
+    try:
+        state_payload = read_state_payload(state_path)
+    except AutoresearchError as exc:
+        if not str(exc).startswith("Missing JSON file:") or parsed.metadata.get("mode") != "exec":
+            raise
+        state_payload = rebuild_exec_state_payload_from_results(
+            results_path=results_path,
+            state_path=state_path,
+            parsed=parsed,
+        )
     direction = state_payload.get("config", {}).get("direction")
     if direction not in {"lower", "higher"}:
         raise AutoresearchError("State config.direction must be 'lower' or 'higher'.")

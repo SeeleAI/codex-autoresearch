@@ -83,7 +83,7 @@ class AutoresearchParallelRetentionTest(AutoresearchScriptsTestBase):
             self.assertEqual(result["status"], "discard")
 
             log_text = results_path.read_text(encoding="utf-8")
-            self.assertIn("1\t-\t11\t+1\tpass\tdiscard", log_text)
+            self.assertIn("1\td4e5f6a\t11\t+1\tpass\tdiscard", log_text)
 
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["state"]["current_metric"], 10)

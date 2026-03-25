@@ -97,6 +97,7 @@ class AutoresearchScriptsTestBase(unittest.TestCase):
         execution_policy: str = "danger_full_access",
         stop_condition: str | None = None,
         required_stop_labels: list[str] | None = None,
+        required_keep_labels: list[str] | None = None,
         companion_repo_scopes: list[str] | None = None,
     ) -> dict[str, object]:
         args = [
@@ -127,6 +128,8 @@ class AutoresearchScriptsTestBase(unittest.TestCase):
             args.extend(["--stop-condition", stop_condition])
         for label in required_stop_labels or []:
             args.extend(["--required-stop-label", label])
+        for label in required_keep_labels or []:
+            args.extend(["--required-keep-label", label])
         for value in companion_repo_scopes or []:
             args.extend(["--companion-repo-scope", value])
         return self.run_script(*args)
@@ -174,6 +177,7 @@ class AutoresearchScriptsTestBase(unittest.TestCase):
         execution_policy: str = "danger_full_access",
         fresh_start: bool = False,
         required_stop_labels: list[str] | None = None,
+        required_keep_labels: list[str] | None = None,
         companion_repo_scopes: list[str] | None = None,
     ) -> dict[str, object]:
         args = [
@@ -206,6 +210,8 @@ class AutoresearchScriptsTestBase(unittest.TestCase):
             args.extend(["--companion-repo-scope", value])
         for label in required_stop_labels or []:
             args.extend(["--required-stop-label", label])
+        for label in required_keep_labels or []:
+            args.extend(["--required-keep-label", label])
         if fresh_start:
             args.append("--fresh-start")
         return self.run_script(*args)

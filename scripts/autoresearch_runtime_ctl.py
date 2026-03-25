@@ -64,6 +64,15 @@ def add_manifest_args(parser: argparse.ArgumentParser) -> None:
             "May be repeated."
         ),
     )
+    parser.add_argument(
+        "--required-keep-label",
+        action="append",
+        default=[],
+        help=(
+            "Require iteration labels before a numerically improved result can be retained as keep. "
+            "May be repeated."
+        ),
+    )
     parser.add_argument("--rollback-policy")
     parser.add_argument("--parallel-mode", choices=["serial", "parallel"], default="serial")
     parser.add_argument("--web-search", choices=["enabled", "disabled"], default="disabled")

@@ -172,6 +172,87 @@ class AutoresearchResultsRowsTest(AutoresearchScriptsTestBase):
                 log_text,
             )
 
+    def test_required_keep_labels_downgrade_improved_keep_to_discard_without_polluting_retained_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            state_path = tmpdir / "autoresearch-state.json"
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Improve latency through the real production path",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "latency ms",
+                "--direction",
+                "lower",
+                "--verify",
+                "python3 -c pass",
+                "--required-keep-label",
+                "Root-Cause",
+                "--required-keep-label",
+                "production-path",
+                "--required-keep-label",
+                "root-cause",
+                "--baseline-metric",
+                "150",
+                "--baseline-commit",
+                "base111",
+                "--baseline-description",
+                "baseline latency",
+            )
+
+            result = self.run_script(
+                "autoresearch_record_iteration.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--status",
+                "keep",
+                "--metric",
+                "120",
+                "--commit",
+                "keep222",
+                "--guard",
+                "pass",
+                "--label",
+                "Production-Path",
+                "--label",
+                "production-path",
+                "--description",
+                "optimized the live request path",
+            )
+            self.assertEqual(result["status"], "discard")
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["config"]["required_keep_labels"],
+                ["root-cause", "production-path"],
+            )
+            self.assertEqual(state["state"]["current_metric"], 150)
+            self.assertEqual(state["state"]["best_metric"], 150)
+            self.assertEqual(state["state"]["current_labels"], [])
+            self.assertEqual(state["state"]["last_trial_commit"], "keep222")
+            self.assertEqual(state["state"]["last_trial_metric"], 120)
+            self.assertEqual(state["state"]["last_trial_labels"], ["production-path"])
+
+            log_text = results_path.read_text(encoding="utf-8")
+            self.assertIn(
+                "1\tkeep222\t120\t-30\tpass\tdiscard\t"
+                "[labels: production-path] optimized the live request path "
+                "[KEEP-GATE miss] missing required keep labels: root-cause",
+                log_text,
+            )
+
     def test_tsv_reconstruction_preserves_structured_labels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -644,6 +725,104 @@ class AutoresearchResultsRowsTest(AutoresearchScriptsTestBase):
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["state"]["iteration"], 1)
             self.assertEqual(state["state"]["current_metric"], 7)
+
+    def test_parallel_batch_keep_gate_preserves_best_discarded_trial_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            state_path = tmpdir / "autoresearch-state.json"
+            batch_path = tmpdir / "batch.json"
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Improve latency through the production path",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "latency ms",
+                "--direction",
+                "lower",
+                "--verify",
+                "python3 -c pass",
+                "--parallel-mode",
+                "parallel",
+                "--required-keep-label",
+                "production-path",
+                "--required-keep-label",
+                "real-backend",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "base111",
+                "--baseline-description",
+                "baseline latency",
+            )
+            batch_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "worker_id": "a",
+                            "commit": "cand111",
+                            "metric": 7,
+                            "guard": "pass",
+                            "description": "narrowed the live request path",
+                            "labels": ["production-path"],
+                            "diff_size": 12,
+                        },
+                        {
+                            "worker_id": "b",
+                            "commit": "cand222",
+                            "metric": 11,
+                            "guard": "pass",
+                            "description": "wrapper experiment",
+                            "diff_size": 4,
+                        },
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_script(
+                "autoresearch_select_parallel_batch.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--batch-file",
+                str(batch_path),
+            )
+            self.assertIsNone(result["selected_worker"])
+            self.assertEqual(result["status"], "discard")
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["state"]["current_metric"], 10)
+            self.assertEqual(state["state"]["best_metric"], 10)
+            self.assertEqual(state["state"]["current_labels"], [])
+            self.assertEqual(state["state"]["last_trial_commit"], "cand111")
+            self.assertEqual(state["state"]["last_trial_metric"], 7)
+            self.assertEqual(state["state"]["last_trial_labels"], ["production-path"])
+
+            log_text = results_path.read_text(encoding="utf-8")
+            self.assertIn(
+                "1a\t-\t7\t-3\tpass\tdiscard\t"
+                "[labels: production-path] [PARALLEL worker-a] narrowed the live request path "
+                "[KEEP-GATE miss] missing required keep labels: real-backend",
+                log_text,
+            )
+            self.assertIn(
+                "1\tcand111\t7\t-3\tpass\tdiscard\t"
+                "[labels: production-path] [PARALLEL batch] no worker produced a keepable improvement; "
+                "best discarded worker-a: narrowed the live request path "
+                "[KEEP-GATE miss] missing required keep labels: real-backend",
+                log_text,
+            )
 
     def test_resume_check_can_rebuild_missing_state_from_tsv(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -42,6 +42,7 @@ STRUCTURED_LABEL_PREFIX_RE = re.compile(
     r"^\[labels:\s*([A-Za-z0-9._/-]+(?:\s*,\s*[A-Za-z0-9._/-]+)*)\]\s*",
     re.IGNORECASE,
 )
+KEEP_GATE_MISS_PREFIX = "[KEEP-GATE miss] missing required keep labels: "
 MAIN_STATUSES = {
     "baseline",
     "blocked",
@@ -216,6 +217,35 @@ def normalize_labels(values: Any) -> list[str]:
                 seen.add(label)
                 normalized.append(label)
     return normalized
+
+
+def evaluate_required_label_gate(
+    required_labels: Any,
+    actual_labels: Any,
+) -> tuple[list[str], list[str], list[str]]:
+    required = normalize_labels(required_labels)
+    actual = normalize_labels(actual_labels)
+    missing = [label for label in required if label not in actual]
+    return required, actual, missing
+
+
+def format_keep_gate_miss_suffix(missing_labels: Any) -> str:
+    missing = normalize_labels(missing_labels)
+    if not missing:
+        raise AutoresearchError("Cannot format a keep-gate miss without missing labels.")
+    return f"{KEEP_GATE_MISS_PREFIX}{', '.join(missing)}"
+
+
+def append_description_suffix(description: str, suffix: str) -> str:
+    text = str(description).strip()
+    suffix_text = str(suffix).strip()
+    if not suffix_text:
+        return text
+    if not text:
+        return suffix_text
+    if text.endswith(suffix_text):
+        return text
+    return f"{text} {suffix_text}"
 
 
 def split_labels_from_description(description: str) -> tuple[list[str], str]:

@@ -117,6 +117,9 @@ def manifest_config_from_args(args: argparse.Namespace) -> dict[str, Any]:
     required_stop_labels = normalize_labels(getattr(args, "required_stop_label", []))
     if required_stop_labels:
         config["required_stop_labels"] = required_stop_labels
+    required_keep_labels = normalize_labels(getattr(args, "required_keep_label", []))
+    if required_keep_labels:
+        config["required_keep_labels"] = required_keep_labels
     return config
 
 

@@ -87,6 +87,158 @@ class AutoresearchExecStateTest(AutoresearchScriptsTestBase):
             self.assertEqual(cleanup["state_path"], str(scratch_state_path))
             self.assertFalse(scratch_state_path.exists())
 
+    def test_exec_record_iteration_rebuilds_missing_scratch_state_from_results_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            results_path = tmpdir / "research-results.tsv"
+            scratch_state_path = Path(
+                self.run_script_text(
+                    "autoresearch_exec_state.py",
+                    "--repo-root",
+                    str(tmpdir),
+                )
+            )
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--mode",
+                "exec",
+                "--goal",
+                "Improve latency through the real production path",
+                "--scope",
+                "src/**/*.py",
+                "--metric-name",
+                "latency ms",
+                "--direction",
+                "lower",
+                "--verify",
+                "python3 -c pass",
+                "--required-keep-label",
+                "Real-Backend",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "base111",
+                "--baseline-description",
+                "baseline latency",
+                cwd=tmpdir,
+            )
+            self.assertTrue(scratch_state_path.exists())
+            scratch_state_path.unlink()
+
+            result = self.run_script(
+                "autoresearch_record_iteration.py",
+                "--results-path",
+                str(results_path),
+                "--status",
+                "keep",
+                "--metric",
+                "8",
+                "--commit",
+                "keep222",
+                "--guard",
+                "pass",
+                "--label",
+                "production-path",
+                "--description",
+                "optimized the live request path",
+                cwd=tmpdir,
+            )
+
+            self.assertEqual(result["status"], "discard")
+            self.assertEqual(result["state_path"], str(scratch_state_path))
+            self.assertTrue(scratch_state_path.exists())
+
+            state = json.loads(scratch_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["mode"], "exec")
+            self.assertEqual(state["config"]["required_keep_labels"], ["real-backend"])
+            self.assertEqual(state["state"]["current_metric"], 10)
+            self.assertEqual(state["state"]["best_metric"], 10)
+            self.assertEqual(state["state"]["last_trial_commit"], "keep222")
+            self.assertEqual(state["state"]["last_trial_metric"], 8)
+            self.assertEqual(state["state"]["last_trial_labels"], ["production-path"])
+
+            log_text = results_path.read_text(encoding="utf-8")
+            self.assertIn("# required_keep_labels: real-backend", log_text)
+            self.assertIn(
+                "[labels: production-path] optimized the live request path "
+                "[KEEP-GATE miss] missing required keep labels: real-backend",
+                log_text,
+            )
+
+    def test_exec_rebuild_preserves_multi_repo_targets_from_results_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            companion = tmpdir / "companion"
+            companion.mkdir()
+            results_path = tmpdir / "research-results.tsv"
+            scratch_state_path = Path(
+                self.run_script_text(
+                    "autoresearch_exec_state.py",
+                    "--repo-root",
+                    str(tmpdir),
+                )
+            )
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--mode",
+                "exec",
+                "--goal",
+                "Improve latency across primary and companion repos",
+                "--scope",
+                "src/**/*.py",
+                "--companion-repo-scope",
+                f"{companion}=pkg/**/*.py",
+                "--metric-name",
+                "latency ms",
+                "--direction",
+                "lower",
+                "--verify",
+                "python3 -c pass",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "base111",
+                "--baseline-description",
+                "baseline latency",
+                cwd=tmpdir,
+            )
+            scratch_state_path.unlink()
+
+            result = self.run_script(
+                "autoresearch_record_iteration.py",
+                "--results-path",
+                str(results_path),
+                "--status",
+                "keep",
+                "--metric",
+                "8",
+                "--commit",
+                "keep222",
+                "--repo-commit",
+                f"{companion}=comp333",
+                "--guard",
+                "pass",
+                "--description",
+                "optimized both repos",
+                cwd=tmpdir,
+            )
+
+            self.assertEqual(result["status"], "keep")
+            state = json.loads(scratch_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(state["config"]["repos"]), 2)
+            self.assertEqual(
+                state["state"]["last_trial_repo_commits"][str(companion.resolve())],
+                "comp333",
+            )
+            log_text = results_path.read_text(encoding="utf-8")
+            self.assertIn("# repos_json: ", log_text)
+
     def test_resume_check_defaults_to_exec_scratch_when_log_declares_exec_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)

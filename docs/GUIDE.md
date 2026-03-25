@@ -164,6 +164,7 @@ Codex infers these from your natural language input and repo context. You never 
 | `Guard` | none | Regression-prevention command that must always pass |
 | `Iterations` | unlimited | Stop after N iterations |
 | `Run tag` | auto-generated | Label for this run in the results log |
+| `Required keep labels` | none | Structured labels that a numerically improved trial must carry before it can enter retained state (for example `production-path`, `real-backend`) |
 | `Stop condition` | none | Custom early-stop rule (e.g., "stop when metric reaches 1" or "stop when metric reaches 90") |
 | `Required stop labels` | none | Structured labels that the retained keep must carry before a numeric stop condition can terminate the run (for example `production-path`, `root-cause`) |
 
@@ -617,7 +618,7 @@ Non-interactive mode for automation pipelines. Differences from interactive mode
 
 Before using `codex exec` in CI, configure Codex CLI authentication in advance. In controlled automation environments, prefer `codex exec --dangerously-bypass-approvals-and-sandbox ...` so the verify command has the same full-access behavior as the managed runtime. For programmatic runs, API key authentication is the preferred option.
 
-When the bundled helper scripts drive `Mode: exec`, do not manually rename old repo-root artifacts first. `autoresearch_init_run.py --mode exec ...` already archives the default `research-results.tsv` and `autoresearch-state.json` files to `research-results.prev.tsv` and `autoresearch-state.prev.json` before it initializes the fresh run.
+When the bundled helper scripts drive `Mode: exec`, do not manually rename old repo-root artifacts first. `autoresearch_init_run.py --mode exec ...` already archives the default `research-results.tsv` and `autoresearch-state.json` files to `research-results.prev.tsv` and `autoresearch-state.prev.json` before it initializes the fresh run. Keep `autoresearch_exec_state.py --cleanup` as the final serial helper step, after the last `autoresearch_record_iteration.py` / `autoresearch_select_parallel_batch.py` call.
 
 See `references/exec-workflow.md` for full details and CI integration examples.
 
