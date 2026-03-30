@@ -1,0 +1,4 @@
+interface:
+  display_name: "Autoresearch Internal Skill Creator"
+  short_description: "Create and sync internal autoresearch modules"
+  default_prompt: "Use $autoresearch-internal-skill-creator to create an internal codex-autoresearch module or to rebuild INTERNAL-MODULES.md and refresh module wiring after any repository skill change."
