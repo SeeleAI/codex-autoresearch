@@ -960,6 +960,8 @@ class AutoresearchSupervisorLaunchTest(AutoresearchScriptsTestBase):
             self.assertIn("Session mode: background", prompt)
             self.assertIn("Do not run the interactive wizard again.", prompt)
             self.assertIn("Stop condition: stop when metric reaches 0", prompt)
+            self.assertIn("Selected planning strategy: modular_final_path", prompt)
+            self.assertIn("Effective planning strategy: modular_final_path", prompt)
             self.assertIn("Runtime checklist:", prompt)
             self.assertIn("Record every completed experiment before starting the next one.", prompt)
             self.assertIn("Use helper scripts for authoritative TSV/state updates.", prompt)
@@ -1039,6 +1041,108 @@ class AutoresearchSupervisorLaunchTest(AutoresearchScriptsTestBase):
             self.assertEqual(Path(gate["results_path"]).resolve(), (tmpdir / "research-results.tsv").resolve())
             self.assertEqual(Path(gate["launch_path"]).resolve(), (tmpdir / "autoresearch-launch.json").resolve())
             self.assertEqual(Path(gate["runtime_path"]).resolve(), (tmpdir / "autoresearch-runtime.json").resolve())
+
+    def test_launch_gate_blocks_combined_items_under_modular_strategy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self.create_launch_manifest(repo, planning_strategy="modular_final_path")
+
+            milestones_path = repo / ".agent-os" / "architecture-milestones.md"
+            milestones_text = milestones_path.read_text(encoding="utf-8").replace(
+                "  - decomposition_mode: isolated",
+                "  - decomposition_mode: combined",
+                1,
+            )
+            milestones_path.write_text(milestones_text, encoding="utf-8")
+
+            gate = self.run_script(
+                "autoresearch_launch_gate.py",
+                "--repo",
+                str(repo),
+            )
+            self.assertEqual(gate["decision"], "needs_human")
+            self.assertEqual(gate["reason"], "planning_strategy_violation")
+            self.assertEqual(gate["planning_strategy"]["selected_strategy"], "modular_final_path")
+            self.assertEqual(gate["planning_strategy"]["effective_strategy"], "modular_final_path")
+            self.assertEqual(
+                [entry["id"] for entry in gate["planning_strategy"]["offenders"]],
+                ["MS-001"],
+            )
+
+    def test_launch_gate_allows_combined_items_for_bootstrap_fresh_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self.create_launch_manifest(repo, planning_strategy="bootstrap_combined_prototype")
+
+            todo_path = repo / ".agent-os" / "todo.md"
+            todo_text = todo_path.read_text(encoding="utf-8").replace(
+                "  - decomposition_mode: isolated",
+                "  - decomposition_mode: combined",
+                1,
+            )
+            todo_path.write_text(todo_text, encoding="utf-8")
+
+            gate = self.run_script(
+                "autoresearch_launch_gate.py",
+                "--repo",
+                str(repo),
+            )
+            self.assertEqual(gate["decision"], "fresh")
+            self.assertEqual(gate["planning_strategy"]["selected_strategy"], "bootstrap_combined_prototype")
+            self.assertEqual(gate["planning_strategy"]["effective_strategy"], "bootstrap_combined_prototype")
+
+    def test_launch_gate_blocks_bootstrap_combined_items_after_resume_transition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            results_path = repo / "research-results.tsv"
+            state_path = repo / "autoresearch-state.json"
+            self.create_launch_manifest(repo, planning_strategy="bootstrap_combined_prototype")
+
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(results_path),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--goal",
+                "Reduce failures",
+                "--scope",
+                "src/**/*.py",
+                "--planning-strategy",
+                "bootstrap_combined_prototype",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "pytest -q",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                "a1b2c3d",
+                "--baseline-description",
+                "baseline failures",
+            )
+
+            milestones_path = repo / ".agent-os" / "architecture-milestones.md"
+            milestones_text = milestones_path.read_text(encoding="utf-8").replace(
+                "  - decomposition_mode: isolated",
+                "  - decomposition_mode: combined",
+                1,
+            )
+            milestones_path.write_text(milestones_text, encoding="utf-8")
+
+            gate = self.run_script(
+                "autoresearch_launch_gate.py",
+                "--repo",
+                str(repo),
+            )
+            self.assertEqual(gate["decision"], "needs_human")
+            self.assertEqual(gate["reason"], "planning_strategy_violation")
+            self.assertEqual(gate["planning_strategy"]["selected_strategy"], "bootstrap_combined_prototype")
+            self.assertEqual(gate["planning_strategy"]["effective_strategy"], "modular_final_path")
 
     def test_launch_gate_repo_subdirectory_resolves_to_actual_repo_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

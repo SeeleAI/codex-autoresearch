@@ -30,7 +30,9 @@ from autoresearch_hook_context import write_hook_context_pointer
 from autoresearch_preflight import evaluate_managed_repos_preflight
 from autoresearch_runtime_common import DEFAULT_EXECUTION_POLICY, EXECUTION_POLICY_CHOICES
 from autoresearch_project_docs import (
+    DEFAULT_PLANNING_STRATEGY,
     normalize_managed_git_policy,
+    PLANNING_STRATEGY_CHOICES,
     project_system_status,
     sync_project_docs,
 )
@@ -75,6 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=EXECUTION_POLICY_CHOICES,
         default=DEFAULT_EXECUTION_POLICY,
         help="Execution policy used for this run's Codex sessions.",
+    )
+    parser.add_argument(
+        "--planning-strategy",
+        choices=PLANNING_STRATEGY_CHOICES,
+        default=DEFAULT_PLANNING_STRATEGY,
+        help="Planning decomposition strategy confirmed during initialization/adoption.",
     )
     parser.add_argument("--iterations", type=int)
     parser.add_argument("--run-tag")
@@ -174,6 +182,7 @@ def main() -> int:
     comments.append(f"# web_search: {args.web_search}")
     comments.append(f"# goal: {args.goal}")
     comments.append(f"# scope: {repo_targets[0].scope}")
+    comments.append(f"# planning_strategy: {args.planning_strategy}")
     comments.append(
         "# repos_json: "
         + json.dumps(serialize_repo_targets(repo_targets), sort_keys=True, separators=(",", ":"))
@@ -212,6 +221,7 @@ def main() -> int:
     config = {
         "goal": args.goal,
         "scope": repo_targets[0].scope,
+        "planning_strategy": args.planning_strategy,
         "repos": serialize_repo_targets(repo_targets),
         "metric": args.metric_name,
         "direction": args.direction,

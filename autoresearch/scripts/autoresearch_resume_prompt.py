@@ -51,6 +51,9 @@ def build_runtime_prompt(
     config = launch_manifest["config"]
     primary_repo = results_repo_root(results_path)
     repo_targets = repo_targets_from_config(primary_repo, config)
+    planning_strategy = launch_context.get("planning_strategy", {})
+    selected_strategy = planning_strategy.get("selected_strategy", config.get("planning_strategy", "modular_final_path"))
+    effective_strategy = planning_strategy.get("effective_strategy", selected_strategy)
     lines = [
         "$codex-autoresearch",
         "This repo is managed by the autoresearch runtime controller.",
@@ -66,6 +69,8 @@ def build_runtime_prompt(
         f"Metric: {config.get('metric', '')}",
         f"Direction: {config.get('direction', '')}",
         f"Verify: {config.get('verify', '')}",
+        f"Selected planning strategy: {selected_strategy}",
+        f"Effective planning strategy: {effective_strategy}",
     ]
     if len(repo_targets) > 1:
         lines.append("Managed repos:")

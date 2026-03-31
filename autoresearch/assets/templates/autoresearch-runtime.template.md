@@ -4,6 +4,9 @@
 
 - Session mode: [foreground/background]
 - Runtime status: [idle/running/stopped/needs_human]
+- Selected planning strategy: [bootstrap_combined_prototype/modular_final_path]
+- Effective planning strategy: [strategy currently enforced for this session]
+- Resume transition rule: `resume_or_continue => modular_final_path`
 - Recovery order: `AGENTS.md` -> `.agent-os/project-index.md` -> active items -> `.agent-os/run-log.md`
 - Last reconciliation: [timestamp and short summary]
 

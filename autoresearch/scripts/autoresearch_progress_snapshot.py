@@ -28,7 +28,7 @@ STALL_REPORT_WINDOW = 3
 STALL_ITERATION_WINDOW = 3
 ALERT_CODES = ("STALL", "REGRESS", "SCOPE_UP", "SCOPE_DOWN", "EVIDENCE_GAP")
 TRACKING_FIELD_RE = re.compile(
-    r"^\s*-\s+(short_label|track_progress|progress_group|progress_scope|evidence_status|evidence_ref):\s*(.*)$"
+    r"^\s*-\s+(short_label|track_progress|progress_group|progress_scope|evidence_status|evidence_ref|decomposition_mode):\s*(.*)$"
 )
 ITEM_RE = re.compile(r"^\s*-\s+`(?P<id>[A-Z]{2,4}-\d{3,})`\s+`\[(?P<status>[^\]]+)\]`:\s*(?P<title>.*)$")
 ACCEPTANCE_RE = re.compile(
@@ -50,6 +50,7 @@ class ProgressItem:
     progress_scope: str
     evidence_status: str
     evidence_ref: str
+    decomposition_mode: str
 
     @property
     def verified(self) -> bool:
@@ -136,6 +137,7 @@ def parse_markdown_items(path: Path, *, item_type: str) -> list[ProgressItem]:
                 progress_scope="",
                 evidence_status="",
                 evidence_ref="",
+                decomposition_mode="",
             )
             items.append(current_item)
             continue
@@ -156,6 +158,8 @@ def parse_markdown_items(path: Path, *, item_type: str) -> list[ProgressItem]:
                 current_item.evidence_status = value.strip().lower()
             elif key == "evidence_ref":
                 current_item.evidence_ref = value
+            elif key == "decomposition_mode":
+                current_item.decomposition_mode = value.strip().lower()
             continue
 
         if raw_line.strip() and not raw_line.startswith(" "):
@@ -243,6 +247,7 @@ def item_snapshot(items: list[ProgressItem]) -> list[dict[str, Any]]:
                 "evidence_gap": 1 if item.evidence_gap else 0,
                 "evidence_ref": item.evidence_ref,
                 "evidence_status": item.evidence_status,
+                "decomposition_mode": item.decomposition_mode,
             }
         )
     return output

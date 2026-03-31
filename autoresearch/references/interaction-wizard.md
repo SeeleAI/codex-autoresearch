@@ -30,6 +30,8 @@ When this file mentions `<skill-root>`, it means the directory containing the lo
 10. The user should never see raw field names (Goal, Scope, Metric, Direction, Verify, Guard). Translate everything into natural conversation.
 11. After the user approves the summary, follow the chosen run mode directly from the same skill entrypoint. Foreground stays in the current session; background persists the confirmed launch manifest and starts the runtime controller. Do not tell the user to switch to a different wrapper command.
 12. End the confirmation summary with a short runtime checklist that reinforces execution order: baseline first, then initialize artifacts, and always log a completed experiment before starting the next one.
+13. For first-time initialization/adoption, ALWAYS ask the user to choose a planning strategy explicitly. Repo scanning may recommend, but must never silently decide, between `bootstrap_combined_prototype` and `modular_final_path`.
+14. If the repo already has a meaningful framework, or the user is resuming/continuing prior work, recommend `modular_final_path` and warn that combined A`+B`+C` milestones are forbidden once resume/continue begins.
 
 ## Clarification Protocol
 
@@ -59,6 +61,10 @@ Rules:
 - For first recovery after prior state exists, re-open only the high-risk git questions through `git-runtime-governor` instead of replaying the full questionnaire.
 - If the user says the experiment spans multiple repos, identify one **primary repo** for run-control artifacts and list any additional **companion repos** separately, each with its own scope.
 - Do not replace the structured summary with a single-line "foreground or background?" prompt. The user should see what you inferred from the repo before they are asked to approve launch.
+- For first-time initialization/adoption, include a planning-strategy question in the forced interrogation flow:
+  - `bootstrap_combined_prototype`: only recommend when the project is genuinely from scratch and lacks a usable code framework; this path may use temporary combined A`+B`+C` bootstrap milestones.
+  - `modular_final_path`: recommend when the repo already has structure, when the user is resuming, or when partial framework decisions already exist; this path must plan isolated A / B / C milestones directly against the final architecture.
+- The repo scan may justify the recommendation, but the human still owns the choice during initialization/adoption.
 
 ### Step 3: Confirm (Structured Format)
 
@@ -185,6 +191,8 @@ Categorized questions for common autoresearch scenarios. Pick 1-3 that are actua
 - "Should I focus on quick wins first, or go straight for the biggest impact?"
 - "If I get stuck after several attempts, should I try bolder architectural changes, or stop and report?"
 - "If failed iterations need rollback, may I use destructive rollback inside a dedicated experiment branch/worktree so I do not have to stop and ask mid-run?"
+- "This repo looks nearly empty. Do you want a temporary `bootstrap_combined_prototype` plan with a simplified A`+B`+C` skeleton first, or should I stay on `modular_final_path` and land isolated final-path modules directly?"
+- "I found an existing framework here, so I recommend `modular_final_path`. Do you agree that milestones must stay split by isolated modules instead of a combined prototype?"
 
 ### Parallel & Search
 

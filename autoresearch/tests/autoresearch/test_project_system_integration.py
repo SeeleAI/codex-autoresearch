@@ -21,6 +21,13 @@ class AutoresearchProjectSystemIntegrationTest(AutoresearchScriptsTestBase):
             self.assertTrue((repo / ".agent-os" / "project-index.md").exists())
             self.assertTrue((repo / ".agent-os" / "autoresearch-config.md").exists())
             self.assertTrue((repo / ".agent-os" / "autoresearch-runtime.md").exists())
+            config_text = (repo / ".agent-os" / "autoresearch-config.md").read_text(encoding="utf-8")
+            milestones_text = (repo / ".agent-os" / "architecture-milestones.md").read_text(encoding="utf-8")
+            todo_text = (repo / ".agent-os" / "todo.md").read_text(encoding="utf-8")
+            self.assertIn("## Planning Strategy", config_text)
+            self.assertIn("modular_final_path", config_text)
+            self.assertIn("decomposition_mode: isolated", milestones_text)
+            self.assertIn("decomposition_mode: isolated", todo_text)
 
     def test_content_matched_claude_copy_is_treated_as_initialized(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -78,6 +85,8 @@ class AutoresearchProjectSystemIntegrationTest(AutoresearchScriptsTestBase):
                 "Reduce failures",
                 "--scope",
                 "src/**/*.py",
+                "--planning-strategy",
+                "bootstrap_combined_prototype",
                 "--metric-name",
                 "failure count",
                 "--direction",
@@ -100,10 +109,13 @@ class AutoresearchProjectSystemIntegrationTest(AutoresearchScriptsTestBase):
 
             self.assertIn("Reduce failures", config_text)
             self.assertIn("## Managed Git Policy", config_text)
+            self.assertIn("bootstrap_combined_prototype", config_text)
             self.assertIn('"auto_commit_enabled": false', config_text)
             self.assertIn("baseline failures", run_log_text)
             self.assertIn("Autoresearch Managed Summary", index_text)
             self.assertIn("Retained metric", runtime_text)
+            self.assertIn("Selected planning strategy: `bootstrap_combined_prototype`", runtime_text)
+            self.assertIn("Planning strategy: `bootstrap_combined_prototype`", index_text)
             self.assertIn("baseline", acceptance_text)
 
             self.run_script(
@@ -131,6 +143,23 @@ class AutoresearchProjectSystemIntegrationTest(AutoresearchScriptsTestBase):
             self.assertIn("discarded attempt after baseline", lessons_text)
             self.assertIn("last status `discard`".lower(), acceptance_text.lower())
             self.assertIn("Last reconciliation", runtime_text)
+
+    def test_validate_project_system_rejects_missing_decomposition_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+
+            self.run_script_text("init_project_system.py", str(repo))
+            todo_path = repo / ".agent-os" / "todo.md"
+            todo_text = todo_path.read_text(encoding="utf-8").replace(
+                "  - decomposition_mode: isolated\n",
+                "",
+                1,
+            )
+            todo_path.write_text(todo_text, encoding="utf-8")
+
+            completed = self.run_script_completed("validate_project_system.py", str(repo))
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("missing decomposition_mode", completed.stdout.lower())
 
     def test_parallel_batch_syncs_project_docs_when_initialized(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

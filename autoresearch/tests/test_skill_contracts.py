@@ -106,6 +106,18 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("Background execution policy: `workspace_write` by default", wizard)
         self.assertIn("Run mode: foreground, or background with `workspace_write` / `danger_full_access`?", wizard)
 
+    def test_planning_strategy_contract_is_documented(self) -> None:
+        wizard = (REPO_ROOT / "references" / "interaction-wizard.md").read_text(encoding="utf-8")
+        workflow = (REPO_ROOT / "references" / "plan-workflow.md").read_text(encoding="utf-8")
+
+        self.assertIn("bootstrap_combined_prototype", wizard)
+        self.assertIn("modular_final_path", wizard)
+        self.assertIn("ALWAYS ask the user to choose a planning strategy explicitly", wizard)
+        self.assertIn("bootstrap_combined_prototype", workflow)
+        self.assertIn("modular_final_path", workflow)
+        self.assertIn("Once the run enters resume/continue, the effective strategy becomes `modular_final_path`.", workflow)
+        self.assertIn("Combined A`+B`+C` milestones are invalid under this strategy.", workflow)
+
     def test_exec_docs_align_on_workspace_write_default(self) -> None:
         canonical_docs = [
             REPO_ROOT / "README.md",

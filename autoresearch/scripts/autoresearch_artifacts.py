@@ -454,6 +454,7 @@ def config_from_results_metadata(metadata: dict[str, str]) -> dict[str, Any]:
     field_map = {
         "goal": "goal",
         "scope": "scope",
+        "planning_strategy": "planning_strategy",
         "metric": "metric",
         "verify": "verify",
         "guard": "guard",

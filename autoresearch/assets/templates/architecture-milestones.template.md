@@ -13,6 +13,7 @@
 - `MS-001` `[ready]`: [Milestone]
   - Related workstreams: [IDs]
   - Acceptance: [How this milestone is judged]
+  - decomposition_mode: isolated
   - short_label: [MS1]
   - track_progress: true/false
   - progress_group: [Required progress group such as RELEASE-A]

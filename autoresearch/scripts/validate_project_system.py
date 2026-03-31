@@ -11,6 +11,14 @@ import os
 import re
 from pathlib import Path
 
+from autoresearch_progress_snapshot import parse_markdown_items
+from autoresearch_project_docs import (
+    ARCHITECTURE_PATH,
+    DECOMPOSITION_MODE_CHOICES,
+    PLANNING_STRATEGY_CHOICES,
+    PLANNING_STRATEGY_MODULAR,
+)
+
 
 REQUIRED_STATE_FILES = {
     "project-index.md",
@@ -28,6 +36,8 @@ REQUIRED_STATE_FILES = {
 ID_PATTERN = re.compile(r"\b([A-Z]{2,4})-(\d{3,})\b")
 MANAGED_GIT_POLICY_START = "<!-- AUTORESEARCH-MANAGED-GIT-POLICY START -->"
 MANAGED_GIT_POLICY_END = "<!-- AUTORESEARCH-MANAGED-GIT-POLICY END -->"
+PLANNING_STRATEGY_RE = re.compile(r"^\s*-\s+Planning strategy:\s*`([^`]+)`\s*$", re.MULTILINE)
+TRANSITION_RULE_RE = re.compile(r"^\s*-\s+Transition rule:\s*`([^`]+)`\s*$", re.MULTILINE)
 
 
 def read_text(path: Path) -> str:
@@ -97,12 +107,28 @@ def validate_autoresearch_docs(state_dir: Path) -> list[str]:
     problems: list[str] = []
     config_path = state_dir / "autoresearch-config.md"
     runtime_path = state_dir / "autoresearch-runtime.md"
+    selected_strategy: str | None = None
     if config_path.exists():
         text = read_text(config_path)
         if "## Run Contract" not in text:
             problems.append("autoresearch-config.md does not declare a Run Contract section")
         if "## Managed Git Policy" not in text:
             problems.append("autoresearch-config.md does not declare a Managed Git Policy section")
+        if "## Planning Strategy" not in text:
+            problems.append("autoresearch-config.md does not declare a Planning Strategy section")
+        else:
+            strategy_match = PLANNING_STRATEGY_RE.search(text)
+            if strategy_match is None:
+                problems.append("autoresearch-config.md is missing a Planning strategy line")
+            else:
+                selected_strategy = strategy_match.group(1).strip()
+                if selected_strategy not in PLANNING_STRATEGY_CHOICES:
+                    problems.append(
+                        "autoresearch-config.md planning strategy must be one of: "
+                        + ", ".join(PLANNING_STRATEGY_CHOICES)
+                    )
+            if TRANSITION_RULE_RE.search(text) is None:
+                problems.append("autoresearch-config.md is missing a planning strategy transition rule")
         if MANAGED_GIT_POLICY_START not in text or MANAGED_GIT_POLICY_END not in text:
             problems.append("autoresearch-config.md is missing the managed git policy marker block")
         else:
@@ -126,6 +152,10 @@ def validate_autoresearch_docs(state_dir: Path) -> list[str]:
             problems.append("autoresearch-runtime.md does not declare a Runtime Overview section")
         if "## Runtime Overview" in text and "Runtime status:" in text and "progress-snapshots.json" not in text:
             problems.append("autoresearch-runtime.md does not reference progress-snapshots.json as numeric progress truth")
+        if "Selected planning strategy:" not in text:
+            problems.append("autoresearch-runtime.md does not expose the selected planning strategy")
+        if "Effective planning strategy:" not in text:
+            problems.append("autoresearch-runtime.md does not expose the effective planning strategy")
     snapshot_path = state_dir / "progress-snapshots.json"
     if snapshot_path.exists():
         try:
@@ -135,6 +165,53 @@ def validate_autoresearch_docs(state_dir: Path) -> list[str]:
         else:
             if "current_snapshot" not in payload or "history" not in payload:
                 problems.append("progress-snapshots.json must contain current_snapshot and history")
+
+    decomposition_problems = validate_decomposition_modes(
+        state_dir=state_dir,
+        selected_strategy=selected_strategy,
+    )
+    problems.extend(decomposition_problems)
+    return problems
+
+
+def validate_decomposition_modes(
+    *,
+    state_dir: Path,
+    selected_strategy: str | None,
+) -> list[str]:
+    problems: list[str] = []
+    offenders: list[str] = []
+    for relative_name, item_type in (
+        (ARCHITECTURE_PATH, "milestone"),
+        ("todo.md", "todo"),
+    ):
+        path = state_dir / relative_name
+        if not path.exists():
+            continue
+        for item in parse_markdown_items(path, item_type=item_type):
+            if item_type == "milestone" and not (
+                item.item_id.startswith("MS-") or item.section.strip().lower() == "milestones"
+            ):
+                continue
+            if item_type == "todo" and not item.item_id.startswith("TD-"):
+                continue
+            if not item.item_id:
+                continue
+            mode = item.decomposition_mode.strip().lower()
+            if not mode:
+                problems.append(f"{relative_name} item {item.item_id} is missing decomposition_mode")
+                continue
+            if mode not in DECOMPOSITION_MODE_CHOICES:
+                problems.append(
+                    f"{relative_name} item {item.item_id} has invalid decomposition_mode {mode!r}"
+                )
+                continue
+            if selected_strategy == PLANNING_STRATEGY_MODULAR and mode == "combined":
+                offenders.append(f"{item.item_id} ({relative_name})")
+    if offenders:
+        problems.append(
+            "modular_final_path forbids combined milestones/todos: " + ", ".join(offenders)
+        )
     return problems
 
 

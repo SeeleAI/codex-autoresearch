@@ -34,6 +34,12 @@
 ```
 <!-- AUTORESEARCH-MANAGED-GIT-POLICY END -->
 
+## Planning Strategy
+
+- Planning strategy: `modular_final_path`
+- Strategy reason: [Ask the user whether planning may use a temporary combined bootstrap prototype or must stay on isolated final-path modules from the start.]
+- Transition rule: `resume_or_continue => modular_final_path`
+
 ## Autonomous Boundaries
 
 - The agent must keep project documents and runtime artifacts synchronized.

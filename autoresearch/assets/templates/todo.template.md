@@ -5,6 +5,7 @@
 - `TD-001` `[backlog]`: [TODO summary]
   - Related items: [WS/MS/REQ IDs]
   - Definition of done: [What must be true]
+  - decomposition_mode: isolated
   - short_label: [TD1]
   - track_progress: true/false
   - progress_group: [Required progress group such as S1-3]

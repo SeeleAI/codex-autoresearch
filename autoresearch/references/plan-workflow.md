@@ -31,6 +31,7 @@ Derived or collected:
 - Verify
 - Guard
 - Iterations
+- Planning strategy
 - Required keep labels
 - Required stop labels
 
@@ -67,9 +68,10 @@ Preferred field order:
 4. Direction
 5. Verify
 6. Guard
-7. Required keep labels (when only a specific mechanism/path/root cause should be allowed into retained state)
-8. Required stop labels (when the success condition depends on mechanism/path/root cause, not just the number)
-9. Launch
+7. Planning strategy
+8. Required keep labels (when only a specific mechanism/path/root cause should be allowed into retained state)
+9. Required stop labels (when the success condition depends on mechanism/path/root cause, not just the number)
+10. Launch
 
 ## Phases
 
@@ -142,7 +144,27 @@ Typical guards:
 - typecheck
 - build
 
-### Phase 8: Confirm and Launch
+### Phase 8: Choose Planning Strategy
+
+Planning strategy is mandatory for first-time initialization/adoption of an uninitialized repo.
+
+Allowed values:
+
+- `bootstrap_combined_prototype`
+  - Only for genuinely from-scratch work with almost no pre-existing framework.
+  - Allows temporary combined A`+B`+C` bootstrap milestones while the first runnable skeleton is being established.
+- `modular_final_path`
+  - Default and recommended whenever the repo already has structure, the user is resuming, or architectural direction already exists.
+  - Milestones and TODOs must stay isolated by final-path modules such as A, then B, then C.
+  - Combined A`+B`+C` milestones are invalid under this strategy.
+
+Rules:
+
+- The wizard must ask the user to choose explicitly; repo inspection may recommend, but never silently decide.
+- Once the run enters resume/continue, the effective strategy becomes `modular_final_path`.
+- Resume/continue therefore hard-blocks any milestone or TODO still marked as combined.
+
+### Phase 9: Confirm and Launch
 
 Return a launch-ready block for already initialized repos, or a decision-complete implementation plan for first-time initialization/adoption:
 
@@ -154,6 +176,7 @@ Metric:
 Direction:
 Verify:
 Guard:
+Planning strategy:
 Required keep labels:
 Required stop labels:
 Iterations:
@@ -170,9 +193,10 @@ Reply sections:
 3. Suggested Metric
 4. Verify Command
 5. Guard
-6. Required Keep Labels (when applicable)
-7. Required Stop Labels (when applicable)
-8. Launch Block
+6. Planning Strategy
+7. Required Keep Labels (when applicable)
+8. Required Stop Labels (when applicable)
+9. Launch Block
 
 ## Success Criteria
 

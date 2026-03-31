@@ -19,6 +19,7 @@ from autoresearch_runtime_common import (
     resolve_repo_path,
     resolve_repo_relative,
 )
+from autoresearch_project_docs import DEFAULT_PLANNING_STRATEGY, PLANNING_STRATEGY_CHOICES
 from autoresearch_runtime_ops import (
     create_launch_manifest,
     launch_and_start_runtime,
@@ -47,6 +48,12 @@ def add_manifest_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--direction", required=True, choices=["lower", "higher"])
     parser.add_argument("--verify", required=True)
     parser.add_argument("--guard")
+    parser.add_argument(
+        "--planning-strategy",
+        choices=PLANNING_STRATEGY_CHOICES,
+        default=DEFAULT_PLANNING_STRATEGY,
+        help="Planning decomposition strategy confirmed during initialization/adoption.",
+    )
     parser.add_argument(
         "--execution-policy",
         choices=EXECUTION_POLICY_CHOICES,

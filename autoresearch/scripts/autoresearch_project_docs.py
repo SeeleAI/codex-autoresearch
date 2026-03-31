@@ -20,7 +20,12 @@ from autoresearch_helpers import (
     resolve_state_path_for_log,
     results_repo_root,
 )
-from autoresearch_progress_snapshot import persist_progress_snapshot, render_progress_snapshot_lines
+from autoresearch_progress_snapshot import (
+    ProgressItem,
+    parse_markdown_items,
+    persist_progress_snapshot,
+    render_progress_snapshot_lines,
+)
 
 
 STATE_DIR_NAME = ".agent-os"
@@ -56,6 +61,19 @@ ID_PATTERN = re.compile(r"\b([A-Z]{2,4})-(\d{3,})\b")
 MANAGED_GIT_POLICY_START = "<!-- AUTORESEARCH-MANAGED-GIT-POLICY START -->"
 MANAGED_GIT_POLICY_END = "<!-- AUTORESEARCH-MANAGED-GIT-POLICY END -->"
 DEFAULT_BRANCH_STRATEGY = "dedicated_experiment_branch"
+PLANNING_STRATEGY_BOOTSTRAP = "bootstrap_combined_prototype"
+PLANNING_STRATEGY_MODULAR = "modular_final_path"
+PLANNING_STRATEGY_CHOICES = (
+    PLANNING_STRATEGY_BOOTSTRAP,
+    PLANNING_STRATEGY_MODULAR,
+)
+DEFAULT_PLANNING_STRATEGY = PLANNING_STRATEGY_MODULAR
+DECOMPOSITION_MODE_COMBINED = "combined"
+DECOMPOSITION_MODE_ISOLATED = "isolated"
+DECOMPOSITION_MODE_CHOICES = (
+    DECOMPOSITION_MODE_COMBINED,
+    DECOMPOSITION_MODE_ISOLATED,
+)
 DEFAULT_GIT_POLICY = {
     "auto_commit_enabled": False,
     "policy_fingerprint": "unset",
@@ -214,6 +232,94 @@ def _normalize_string_list(values: Any) -> list[str]:
     return normalized
 
 
+def normalize_planning_strategy(value: object) -> str:
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized in PLANNING_STRATEGY_CHOICES:
+            return normalized
+    return DEFAULT_PLANNING_STRATEGY
+
+
+def effective_planning_strategy(selected: object, *, resume_context: bool) -> str:
+    if resume_context:
+        return PLANNING_STRATEGY_MODULAR
+    return normalize_planning_strategy(selected)
+
+
+def extract_planning_strategy(config: dict[str, Any] | None) -> str:
+    if not isinstance(config, dict):
+        return DEFAULT_PLANNING_STRATEGY
+    return normalize_planning_strategy(config.get("planning_strategy"))
+
+
+def planning_strategy_transition_rule() -> str:
+    return "resume_or_continue => modular_final_path"
+
+
+def normalize_decomposition_mode(value: object) -> str:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in DECOMPOSITION_MODE_CHOICES:
+            return normalized
+    return ""
+
+
+def load_decomposition_items(project_root: Path, *, state_dir: str = STATE_DIR_NAME) -> list[ProgressItem]:
+    state_path = project_state_dir(project_root, state_dir)
+    items: list[ProgressItem] = []
+    for name, item_type in (
+        (ARCHITECTURE_PATH, "milestone"),
+        ("todo.md", "todo"),
+    ):
+        path = state_path / name
+        if not path.exists():
+            continue
+        parsed_items = parse_markdown_items(path, item_type=item_type)
+        if item_type == "milestone":
+            parsed_items = [
+                item
+                for item in parsed_items
+                if item.item_id.startswith("MS-") or item.section.strip().lower() == "milestones"
+            ]
+        elif item_type == "todo":
+            parsed_items = [item for item in parsed_items if item.item_id.startswith("TD-")]
+        items.extend(parsed_items)
+    return items
+
+
+def planning_strategy_violations(
+    project_root: Path,
+    *,
+    selected_strategy: object,
+    resume_context: bool,
+    state_dir: str = STATE_DIR_NAME,
+) -> dict[str, Any]:
+    selected = normalize_planning_strategy(selected_strategy)
+    effective = effective_planning_strategy(selected, resume_context=resume_context)
+    offenders: list[dict[str, str]] = []
+    for item in load_decomposition_items(project_root, state_dir=state_dir):
+        if normalize_decomposition_mode(item.decomposition_mode) != DECOMPOSITION_MODE_COMBINED:
+            continue
+        offenders.append(
+            {
+                "id": item.item_id,
+                "type": item.item_type,
+                "title": item.title,
+                "section": item.section,
+                "decomposition_mode": item.decomposition_mode,
+            }
+        )
+    blocked = effective == PLANNING_STRATEGY_MODULAR and bool(offenders)
+    return {
+        "selected_strategy": selected,
+        "effective_strategy": effective,
+        "resume_context": resume_context,
+        "transition_rule": planning_strategy_transition_rule(),
+        "blocked": blocked,
+        "offenders": offenders,
+    }
+
+
 def _policy_fingerprint(policy: dict[str, Any]) -> str:
     serializable = {
         "auto_commit_enabled": bool(policy.get("auto_commit_enabled", False)),
@@ -267,6 +373,7 @@ def render_autoresearch_config(config: dict[str, Any], *, mode: str, project_roo
     companion = [f"- Companion repo: `{repo['path']}` :: `{repo['scope']}`" for repo in repos[1:]]
     iterations = config.get("iterations")
     git_policy = normalize_managed_git_policy(config, project_root=project_root)
+    selected_strategy = extract_planning_strategy(config)
     return "\n".join(
         [
             "# Autoresearch Config",
@@ -297,6 +404,12 @@ def render_autoresearch_config(config: dict[str, Any], *, mode: str, project_roo
             json.dumps(git_policy, indent=2, sort_keys=True),
             "```",
             MANAGED_GIT_POLICY_END,
+            "",
+            "## Planning Strategy",
+            "",
+            f"- Planning strategy: `{selected_strategy}`",
+            "- Strategy reason: Explicitly confirm whether planning may use a temporary combined bootstrap prototype or must stay on isolated final-path modules from the start.",
+            f"- Transition rule: `{planning_strategy_transition_rule()}`",
             "",
             "## Autonomous Boundaries",
             "",
@@ -330,6 +443,8 @@ def render_autoresearch_runtime(
 ) -> str:
     runtime_status = runtime_payload.get("status", "idle") if runtime_payload else "idle"
     terminal_reason = runtime_payload.get("terminal_reason", "none") if runtime_payload else "none"
+    selected_strategy = extract_planning_strategy(config)
+    effective_strategy = effective_planning_strategy(selected_strategy, resume_context=False)
     return "\n".join(
         [
             "# Autoresearch Runtime",
@@ -339,6 +454,9 @@ def render_autoresearch_runtime(
             f"- Session mode: `{config.get('session_mode', 'foreground')}`",
             f"- Runtime status: `{runtime_status}`",
             f"- Terminal reason: `{terminal_reason}`",
+            f"- Selected planning strategy: `{selected_strategy}`",
+            f"- Effective planning strategy: `{effective_strategy}`",
+            f"- Resume transition rule: `{planning_strategy_transition_rule()}`",
             "- Recovery order: `AGENTS.md` -> `.agent-os/project-index.md` -> active items -> `.agent-os/run-log.md`",
             f"- Last reconciliation: {reconcile_summary}",
             "",
@@ -395,6 +513,7 @@ def sync_project_docs(
     state_path_dir = project_state_dir(repo, state_dir)
 
     state_config = dict(state_payload.get("config", {}))
+    state_config["planning_strategy"] = extract_planning_strategy(state_config)
     state_config["git_policy"] = normalize_managed_git_policy(state_config, project_root=repo)
     state_payload["config"] = state_config
     config_text = render_autoresearch_config(state_config, mode=state_payload.get("mode", "loop"), project_root=repo)
@@ -430,6 +549,7 @@ def sync_project_docs(
                 "",
                 f"- Goal: {state_payload.get('config', {}).get('goal', '')}",
                 f"- Session mode: `{state_payload.get('config', {}).get('session_mode', 'foreground')}`",
+                f"- Planning strategy: `{extract_planning_strategy(state_payload.get('config', {}))}`",
                 f"- Runtime status: `{runtime_payload.get('status', 'idle') if runtime_payload else 'idle'}`",
                 f"- Retained metric: `{state_payload['state']['current_metric']}`",
                 f"- Last status: `{state_payload['state']['last_status']}`",

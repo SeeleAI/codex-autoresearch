@@ -25,6 +25,7 @@ from autoresearch_launch_gate import pid_is_alive
 from autoresearch_lessons import append_summary_lesson_if_needed, lessons_path_from_results
 from autoresearch_progress_snapshot import persist_progress_snapshot
 from autoresearch_project_docs import normalize_managed_git_policy, project_system_status
+from autoresearch_project_docs import DEFAULT_PLANNING_STRATEGY, extract_planning_strategy
 
 
 DEFAULT_RESULTS_PATH = "research-results.tsv"
@@ -111,6 +112,7 @@ def manifest_config_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "session_mode": "background",
         "goal": args.goal,
         "scope": repo_targets[0].scope,
+        "planning_strategy": getattr(args, "planning_strategy", DEFAULT_PLANNING_STRATEGY),
         "repos": serialize_repo_targets(repo_targets),
         "execution_policy": getattr(args, "execution_policy", DEFAULT_EXECUTION_POLICY),
         "metric": args.metric_name,
@@ -124,6 +126,7 @@ def manifest_config_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "parallel_mode": args.parallel_mode,
         "web_search": args.web_search,
     }
+    config["planning_strategy"] = extract_planning_strategy(config)
     config["git_policy"] = normalize_managed_git_policy(config, project_root=primary_repo)
     required_stop_labels = normalize_labels(getattr(args, "required_stop_label", []))
     if required_stop_labels:

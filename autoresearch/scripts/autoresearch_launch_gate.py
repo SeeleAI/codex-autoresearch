@@ -13,12 +13,18 @@ from autoresearch_helpers import (
     default_runtime_state_path,
     read_launch_manifest,
     read_runtime_payload,
+    read_state_payload,
     resolve_repo_path,
     resolve_repo_relative,
     resolve_repo_managed_path,
     results_repo_root,
 )
-from autoresearch_project_docs import project_system_status
+from autoresearch_project_docs import (
+    DEFAULT_PLANNING_STRATEGY,
+    extract_planning_strategy,
+    planning_strategy_violations,
+    project_system_status,
+)
 from autoresearch_resume_check import evaluate_resume_state
 
 
@@ -54,6 +60,13 @@ def evaluate_launch_context(
     state_path = Path(str(resume["state_path"]))
     results_exists = bool(resume["has_results"])
     state_exists = bool(resume["has_state"])
+    state_payload = None
+    state_error = None
+    if state_exists and state_path.exists():
+        try:
+            state_payload = read_state_payload(state_path)
+        except AutoresearchError as exc:
+            state_error = str(exc)
 
     launch_manifest = None
     launch_error = None
@@ -123,6 +136,22 @@ def evaluate_launch_context(
             "reasons": reasons,
         }
 
+    if state_error is not None and resume["decision"] in {"full_resume", "mini_wizard"}:
+        reasons.append(state_error)
+        return {
+            "decision": "needs_human",
+            "reason": "invalid_state_json",
+            "resume_strategy": "mini_resume",
+            "results_path": str(results_path),
+            "state_path": str(state_path),
+            "launch_path": str(launch_path),
+            "runtime_path": str(runtime_path),
+            "launch_manifest_present": launch_manifest is not None,
+            "runtime_present": runtime_payload is not None or runtime_error is not None,
+            "runtime_running": False,
+            "reasons": reasons,
+        }
+
     if resume["decision"] == "full_resume":
         reasons.extend(str(reason) for reason in resume["reasons"])
         if launch_manifest is None:
@@ -186,6 +215,44 @@ def evaluate_launch_context(
             "project_system": project_status,
         }
 
+    selected_strategy = DEFAULT_PLANNING_STRATEGY
+    if state_payload is not None:
+        selected_strategy = extract_planning_strategy(state_payload.get("config", {}))
+    elif launch_manifest is not None:
+        selected_strategy = extract_planning_strategy(launch_manifest.get("config", {}))
+
+    resume_context = resume["decision"] != "fresh_start"
+    planning_check = planning_strategy_violations(
+        project_root,
+        selected_strategy=selected_strategy,
+        resume_context=resume_context,
+    )
+    if planning_check["blocked"]:
+        offender_ids = [entry["id"] for entry in planning_check["offenders"]]
+        reasons.append(
+            "Effective planning strategy "
+            f"`{planning_check['effective_strategy']}` forbids combined milestones/todos during resume/continue."
+        )
+        reasons.append(
+            "Resolve or rewrite these combined items before launch: "
+            + ", ".join(offender_ids)
+        )
+        return {
+            "decision": "needs_human",
+            "reason": "planning_strategy_violation",
+            "resume_strategy": "none",
+            "results_path": str(results_path),
+            "state_path": str(state_path),
+            "launch_path": str(launch_path),
+            "runtime_path": str(runtime_path),
+            "launch_manifest_present": launch_manifest is not None,
+            "runtime_present": runtime_payload is not None or runtime_error is not None,
+            "runtime_running": False,
+            "reasons": reasons,
+            "project_system": project_status,
+            "planning_strategy": planning_check,
+        }
+
     if resume["decision"] == "fresh_start":
         strategy = "launch_manifest_ready" if launch_manifest is not None else "cold_start"
         reason = (
@@ -211,6 +278,7 @@ def evaluate_launch_context(
             "runtime_running": False,
             "reasons": reasons,
             "project_system": project_status,
+            "planning_strategy": planning_check,
         }
 
     if resume["decision"] == "mini_wizard" and resume["detail"] == "state_without_results":
@@ -228,6 +296,7 @@ def evaluate_launch_context(
             "runtime_running": False,
             "reasons": reasons,
             "project_system": project_status,
+            "planning_strategy": planning_check,
         }
 
     if resume["decision"] == "full_resume":
@@ -247,6 +316,7 @@ def evaluate_launch_context(
             "runtime_running": False,
             "reasons": reasons,
             "project_system": project_status,
+            "planning_strategy": planning_check,
         }
 
     if resume["decision"] == "tsv_fallback":
@@ -264,6 +334,7 @@ def evaluate_launch_context(
             "runtime_running": False,
             "reasons": reasons,
             "project_system": project_status,
+            "planning_strategy": planning_check,
         }
 
     reasons.extend(str(reason) for reason in resume["reasons"])
@@ -289,6 +360,7 @@ def evaluate_launch_context(
         "runtime_running": False,
         "reasons": reasons,
         "project_system": project_status,
+        "planning_strategy": planning_check,
     }
 
 
