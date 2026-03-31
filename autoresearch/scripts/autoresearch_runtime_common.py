@@ -24,7 +24,7 @@ from autoresearch_helpers import (
 from autoresearch_launch_gate import pid_is_alive
 from autoresearch_lessons import append_summary_lesson_if_needed, lessons_path_from_results
 from autoresearch_progress_snapshot import persist_progress_snapshot
-from autoresearch_project_docs import project_system_status
+from autoresearch_project_docs import normalize_managed_git_policy, project_system_status
 
 
 DEFAULT_RESULTS_PATH = "research-results.tsv"
@@ -124,6 +124,7 @@ def manifest_config_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "parallel_mode": args.parallel_mode,
         "web_search": args.web_search,
     }
+    config["git_policy"] = normalize_managed_git_policy(config, project_root=primary_repo)
     required_stop_labels = normalize_labels(getattr(args, "required_stop_label", []))
     if required_stop_labels:
         config["required_stop_labels"] = required_stop_labels

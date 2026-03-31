@@ -26,6 +26,8 @@ REQUIRED_STATE_FILES = {
     "progress-snapshots.json",
 }
 ID_PATTERN = re.compile(r"\b([A-Z]{2,4})-(\d{3,})\b")
+MANAGED_GIT_POLICY_START = "<!-- AUTORESEARCH-MANAGED-GIT-POLICY START -->"
+MANAGED_GIT_POLICY_END = "<!-- AUTORESEARCH-MANAGED-GIT-POLICY END -->"
 
 
 def read_text(path: Path) -> str:
@@ -33,6 +35,20 @@ def read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         return path.read_text(encoding="utf-8", errors="replace")
+
+
+def files_match(path_a: Path, path_b: Path) -> tuple[bool, bool]:
+    same_file = False
+    try:
+        same_file = os.path.samefile(path_a, path_b)
+    except OSError:
+        same_file = False
+    if same_file:
+        return True, True
+    try:
+        return read_text(path_a) == read_text(path_b), False
+    except OSError:
+        return False, False
 
 
 def validate_link(agents_path: Path, claude_path: Path) -> list[str]:
@@ -43,11 +59,11 @@ def validate_link(agents_path: Path, claude_path: Path) -> list[str]:
         problems.append("Missing root CLAUDE.md")
     if problems:
         return problems
-    try:
-        if not os.path.samefile(agents_path, claude_path):
-            problems.append("CLAUDE.md is not the same file as AGENTS.md")
-    except OSError as exc:
-        problems.append(f"Could not compare AGENTS.md and CLAUDE.md: {exc}")
+    matches, same_file = files_match(agents_path, claude_path)
+    if not matches:
+        problems.append("CLAUDE.md does not match AGENTS.md")
+    elif not same_file:
+        print("[WARN] CLAUDE.md is a content-matched copy of AGENTS.md, not a hard link")
     return problems
 
 
@@ -85,6 +101,25 @@ def validate_autoresearch_docs(state_dir: Path) -> list[str]:
         text = read_text(config_path)
         if "## Run Contract" not in text:
             problems.append("autoresearch-config.md does not declare a Run Contract section")
+        if "## Managed Git Policy" not in text:
+            problems.append("autoresearch-config.md does not declare a Managed Git Policy section")
+        if MANAGED_GIT_POLICY_START not in text or MANAGED_GIT_POLICY_END not in text:
+            problems.append("autoresearch-config.md is missing the managed git policy marker block")
+        else:
+            block = text.split(MANAGED_GIT_POLICY_START, 1)[1].split(MANAGED_GIT_POLICY_END, 1)[0]
+            match = re.search(r"```json\s*(\{.*?\})\s*```", block, re.DOTALL)
+            if match is None:
+                problems.append("autoresearch-config.md managed git policy block is not valid JSON markdown")
+            else:
+                try:
+                    payload = json.loads(match.group(1))
+                except json.JSONDecodeError as exc:
+                    problems.append(f"autoresearch-config.md managed git policy JSON is invalid: {exc}")
+                else:
+                    if not isinstance(payload, dict):
+                        problems.append("autoresearch-config.md managed git policy JSON must be an object")
+                    elif "policy_fingerprint" not in payload:
+                        problems.append("autoresearch-config.md managed git policy JSON is missing policy_fingerprint")
     if runtime_path.exists():
         text = read_text(runtime_path)
         if "## Runtime Overview" not in text:

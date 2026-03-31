@@ -165,7 +165,7 @@ ELSE background:
   2. 仮説を1つ選択（パースペクティブを適用し、環境でフィルタリング）
      -- 並列モードがアクティブな場合は N 個の仮説を選択
   3. アトミックな変更を1つ実施
-  4. git commit（検証の前に）
+  4. 機械的な verify と guard の後に governed commit
   5. 機械的検証 + guard を実行
   6. 改善 -> 保持（教訓を抽出）。悪化 -> 承認済みのロールバック戦略。クラッシュ -> 修正またはスキップ。
   7. 結果を記録
@@ -449,7 +449,7 @@ Codex がインタラクティブモードで以前中断された run を検出
 # GitHub Actions の例
 - name: Autoresearch optimization
   run: |
-    codex exec --dangerously-bypass-approvals-and-sandbox <<'PROMPT'
+    codex exec --full-auto <<'PROMPT'
     $codex-autoresearch
     Mode: exec
     Goal: Reduce type errors
@@ -463,7 +463,7 @@ Codex がインタラクティブモードで以前中断された run を検出
 
 終了コード：0 = 改善、1 = 改善なし、2 = ハードブロッカー。
 
-CI で `codex exec` を使う前に、Codex CLI の認証を事前に設定してください。制御された自動化環境では、単独の `exec` 実行も managed runtime の既定ポリシー `danger_full_access` に揃うよう、`codex exec --dangerously-bypass-approvals-and-sandbox ...` を優先してください。プログラム実行では API key 認証が推奨です。
+CI で `codex exec` を使う前に、Codex CLI の認証を事前に設定してください。制御された自動化環境では、単独の `exec` 実行も managed runtime の既定のサンドボックス付き `workspace_write` ポリシーに揃うよう、`codex exec --full-auto ...` を優先してください。無制限のネストされたセッションが本当に必要な場合だけ、`danger_full_access` を明示的に使ってください。プログラム実行では API key 認証が推奨です。
 
 `Mode: exec` を skill 同梱の helper script で動かす場合、repo 直下の古い成果物を手動でリネームしないでください。`autoresearch_init_run.py --mode exec ...` が既定の `research-results.tsv` と `autoresearch-state.json` を `research-results.prev.tsv` と `autoresearch-state.prev.json` に自動で退避してから、新しい実行を初期化します。
 
@@ -517,7 +517,7 @@ control-plane をスクリプト化したりデバッグしたりする場合、
 - 実験が複数リポジトリにまたがる場合、確認済みの launch manifest には companion repos と各 repo 固有の scope も記述できます。runtime preflight は管理対象の全 repo を検査しますが、`research-results.tsv`、`autoresearch-state.json`、runtime-control の各工件は primary repo に置かれたままです
 - このモデルでは TSV の `commit` 列は引き続き primary repo の commit だけを記録し、companion repo ごとの commit provenance は `autoresearch-state.json` に保存されます
 - `background` の各 managed runtime cycle は、runtime prompt を stdin で渡した非対話の `codex exec` セッションとして実行されます
-- `execution_policy` はネストした Codex セッションを起動する経路、つまり `background` と `exec` にだけ適用されます。この skill の既定値は `danger_full_access` です
+- `execution_policy` はネストした Codex セッションを起動する経路、つまり `background` と `exec` にだけ適用されます。この skill の既定値はサンドボックス付きの `workspace_write` です
 - その後の `status`、`stop`、`resume` も同じ `$codex-autoresearch` から行いますが、`status/stop` は `background` にだけ適用されます
 - `Mode: exec` は、CI や完全に指定された自動化向けの上級パスとして残ります
 
@@ -632,7 +632,7 @@ codex-autoresearch/
 
 **Web 検索は可能？** はい。複数回の戦略ピボット後にスタックした場合に使用されます。Web 検索結果は仮説として扱われ、機械的に検証されます。
 
-**CI で使うには？** `Mode: exec` または `codex exec` を使用してください。制御された自動化環境では、既定 runtime と権限を揃えるため `codex exec --dangerously-bypass-approvals-and-sandbox ...` を使うのが推奨です。全ての設定は事前に指定され、出力は JSON 形式で、終了コードが成功/失敗を示します。
+**CI で使うには？** `Mode: exec` または `codex exec` を使用してください。制御された自動化環境では、既定 runtime のサンドボックス付き `workspace_write` 権限に合わせるため `codex exec --full-auto ...` を使うのが推奨です。無制限のネストされたセッションが明示的に必要な場合だけ `danger_full_access` に切り替えてください。全ての設定は事前に指定され、出力は JSON 形式で、終了コードが成功/失敗を示します。
 
 **複数のアイデアを同時にテストできる？** はい。セットアップ中に並列実験を有効にしてください。git worktree を使用して最大 3 つの仮説を同時にテストします。
 

@@ -70,7 +70,7 @@ Rules:
 
 ### Phase 4: Commit
 
-Commit before verification when the workspace is isolated.
+Run the governed commit after verification and guard handling, even when the workspace is isolated.
 
 ### Phase 5: Verify
 

@@ -20,8 +20,11 @@ from autoresearch_helpers import (
     default_launch_manifest_path,
     default_runtime_log_path,
     default_runtime_state_path,
+    has_git_repo,
+    normalize_repo_commit_map,
     repo_targets_from_config,
     read_launch_manifest,
+    read_state_payload,
     resolve_state_path,
     resolve_state_path_for_log,
     sync_state_session_mode,
@@ -49,7 +52,7 @@ from autoresearch_runtime_common import (
     resolve_repo_relative,
 )
 from autoresearch_progress_snapshot import calculate_progress_snapshot, persist_progress_snapshot
-from autoresearch_project_docs import project_system_status
+from autoresearch_project_docs import normalize_managed_git_policy, project_system_status
 
 STOP_POLL_INTERVAL_SECONDS = 0.1
 STOP_KILL_WAIT_SECONDS = 1.0
@@ -159,6 +162,126 @@ def build_codex_exec_command(
     repo: Path,
 ) -> list[str]:
     return [codex_bin, "exec", *codex_args, "-C", str(repo), "-"]
+
+
+def git_commit_exists(repo: Path, commit: str) -> bool:
+    completed = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"{commit}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def git_commit_message(repo: Path, commit: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repo), "log", "-1", "--format=%B", commit],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise AutoresearchError(detail or f"Unable to read commit message for {commit}")
+    return completed.stdout
+
+
+def validate_governed_repo_commit(
+    *,
+    repo: Path,
+    commit: str,
+    iteration: int,
+    fingerprint: str,
+) -> str | None:
+    if commit == "-":
+        return None
+    if not has_git_repo(repo):
+        return f"Runtime state references repo without git metadata: {repo}"
+    if not git_commit_exists(repo, commit):
+        return f"Runtime state references a missing git commit in {repo}: {commit}"
+
+    first_line = git_commit_message(repo, commit).splitlines()[0].strip()
+    expected_prefix = f"autoresearch: iteration {iteration:03d} "
+    if not first_line.startswith(expected_prefix):
+        return (
+            "Latest trial commit does not use the governed commit prefix for "
+            f"iteration {iteration:03d} in {repo}: {first_line!r}"
+        )
+    if f"[policy={fingerprint}]" not in first_line:
+        return (
+            "Latest trial commit is missing the managed git policy fingerprint "
+            f"{fingerprint!r} in {repo}: {first_line!r}"
+        )
+    return None
+
+
+def evaluate_governed_commit_contract(
+    *,
+    repo: Path,
+    state_path: Path,
+    previous_state_payload: dict[str, Any] | None,
+) -> str | None:
+    if not has_git_repo(repo) or not state_path.exists():
+        return None
+
+    current_state_payload = read_state_payload(state_path)
+    current_state = dict(current_state_payload.get("state", {}))
+    previous_state = (
+        dict(previous_state_payload.get("state", {}))
+        if isinstance(previous_state_payload, dict)
+        else {}
+    )
+    current_iteration = int(current_state.get("iteration", 0))
+    previous_iteration = int(previous_state.get("iteration", 0))
+    current_trial_commit = str(current_state.get("last_trial_commit") or "-")
+    previous_trial_commit = str(previous_state.get("last_trial_commit") or "-")
+    current_trial_repo_commits = normalize_repo_commit_map(
+        current_state.get("last_trial_repo_commits")
+    )
+    previous_trial_repo_commits = normalize_repo_commit_map(
+        previous_state.get("last_trial_repo_commits")
+    )
+
+    if (
+        current_iteration <= previous_iteration
+        and current_trial_commit == previous_trial_commit
+        and current_trial_repo_commits == previous_trial_repo_commits
+    ):
+        return None
+
+    last_status = str(current_state.get("last_status") or "")
+    if current_trial_commit == "-":
+        if last_status in {"keep", "discard", "crash"}:
+            return (
+                "Runtime advanced state without a trial commit for a commit-bearing status "
+                f"({last_status})."
+            )
+        return None
+
+    git_policy = normalize_managed_git_policy(
+        dict(current_state_payload.get("config", {})),
+        project_root=repo,
+    )
+    if not bool(git_policy.get("auto_commit_enabled", False)):
+        return (
+            "Runtime advanced state with a trial commit, but managed git policy does not permit "
+            "governed auto-commit."
+        )
+    fingerprint = str(git_policy.get("policy_fingerprint") or "unset")
+    repo_commit_map = dict(current_trial_repo_commits)
+    if current_trial_commit != "-":
+        repo_commit_map.setdefault(str(repo.resolve()), current_trial_commit)
+    for raw_repo_path, commit in sorted(repo_commit_map.items()):
+        commit_error = validate_governed_repo_commit(
+            repo=Path(raw_repo_path).resolve(),
+            commit=commit,
+            iteration=current_iteration,
+            fingerprint=fingerprint,
+        )
+        if commit_error is not None:
+            return commit_error
+    return None
 
 
 def mark_runtime_needs_human(
@@ -451,8 +574,6 @@ def start_runtime(args: argparse.Namespace, *, runner_path: Path) -> dict[str, A
     resolved_codex_bin = resolve_codex_bin_path(args.codex_bin)
 
     ensure_runtime_not_running(runtime_path)
-    if not launch_path.exists():
-        raise AutoresearchError(f"Missing JSON file: {launch_path}")
 
     launch_context = evaluate_launch_context(
         results_path=results_path,
@@ -464,6 +585,8 @@ def start_runtime(args: argparse.Namespace, *, runner_path: Path) -> dict[str, A
         raise AutoresearchError(
             f"Cannot start runtime while launch gate reports {launch_context['decision']}: {launch_context['reason']}"
         )
+    if not launch_path.exists():
+        raise AutoresearchError(f"Missing JSON file: {launch_path}")
 
     if not command_is_executable(resolved_codex_bin):
         raise AutoresearchError(f"Codex executable is not available: {args.codex_bin}")
@@ -697,6 +820,7 @@ def run_runtime(args: argparse.Namespace) -> int:
             )
 
         state_path = Path(launch_context["state_path"])
+        previous_state_payload = read_state_payload(state_path) if state_path.exists() else None
         if state_path.exists():
             sync_state_session_mode(
                 state_path,
@@ -748,6 +872,26 @@ def run_runtime(args: argparse.Namespace) -> int:
                 launch_context=launch_context,
                 reason="codex_exec_unavailable",
                 error=f"Failed to launch codex exec: {exc}",
+            )
+
+        governed_contract_error = None
+        if state_path.exists():
+            try:
+                governed_contract_error = evaluate_governed_commit_contract(
+                    repo=repo,
+                    state_path=state_path,
+                    previous_state_payload=previous_state_payload,
+                )
+            except AutoresearchError as exc:
+                governed_contract_error = str(exc)
+        if governed_contract_error is not None:
+            return mark_runtime_needs_human(
+                repo=repo,
+                runtime=runtime,
+                runtime_path=runtime_path,
+                launch_context=launch_context,
+                reason="governor_contract_violation",
+                error=governed_contract_error,
             )
 
         supervisor = evaluate_supervisor_status(

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-}"
 KEEP_TEMP=1
-DANGEROUS=1
+DANGEROUS=0
 
 usage() {
   cat <<'EOF'
@@ -23,12 +23,12 @@ Modes:
                      for the interactive wizard + explicit foreground/background choice.
 
 Flags:
-  --dangerous        Legacy alias for the default exec-smoke behavior:
-                     pass --dangerously-bypass-approvals-and-sandbox to codex exec
-                     inside the disposable temp repo created by this harness.
-  --sandboxed        Force exec-smoke to use --full-auto instead. This is useful for
-                     reproducing sandbox-related blockers, but may fail protocol checks
-                     because git commit/revert writes inside .git are sandboxed.
+  --dangerous        Override exec-smoke to use
+                     --dangerously-bypass-approvals-and-sandbox. This is useful when
+                     reproducing sandbox-related blockers or when the end-to-end flow
+                     must exercise unrestricted nested sessions.
+  --sandboxed        Force exec-smoke to use --full-auto. This matches the managed
+                     runtime's default `workspace_write` execution policy.
   --clean            Delete the temp repo after the command finishes successfully.
 EOF
 }
@@ -88,6 +88,13 @@ init_git_repo() {
   git -C "$repo" config user.email e2e@example.com
   git -C "$repo" add .
   git -C "$repo" commit -m "fixture baseline" >/dev/null
+}
+
+init_project_system() {
+  local skill_root="$1"
+  local repo="$2"
+  python3 "$skill_root/scripts/init_project_system.py" "$repo" >/dev/null
+  python3 "$skill_root/scripts/validate_project_system.py" "$repo" >/dev/null
 }
 
 prepare_skill_repo() {
@@ -229,6 +236,7 @@ run_runtime_smoke() {
   skill_root="$repo/.agents/skills/codex-autoresearch"
   fake_codex="$tmpdir/fake-codex"
   write_sleeping_fake_codex "$fake_codex"
+  init_project_system "$skill_root" "$repo"
 
   python3 "$skill_root/scripts/autoresearch_runtime_ctl.py" launch \
     --repo "$repo" \

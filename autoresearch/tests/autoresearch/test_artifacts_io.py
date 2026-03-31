@@ -20,6 +20,9 @@ class AutoresearchArtifactsIoTest(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
+    def test_scripts_module_alias_points_to_loaded_artifacts_module(self) -> None:
+        self.assertIs(sys.modules["scripts.autoresearch_artifacts"], sys.modules["autoresearch_artifacts"])
+
     def test_write_json_atomic_falls_back_when_replace_is_denied(self) -> None:
         path = self.tmpdir / "state.json"
 

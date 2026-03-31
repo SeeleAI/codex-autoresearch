@@ -163,7 +163,7 @@ ELSE background:
   2. 选一个假设（应用多视角推理，按环境过滤）
      -- 并行模式激活时选 N 个假设
   3. 做一个原子改动
-  4. git commit（验证之前）
+  4. 先做机械验证和 guard，再做 governed commit
   5. 运行机械化验证 + guard
   6. 改善了 -> 保留（提取经验）。变差了 -> 按批准的回滚策略处理。崩溃了 -> 修复或跳过。
   7. 记录结果
@@ -447,7 +447,7 @@ security + fix               # 审计并修复一步到位
 # GitHub Actions 示例
 - name: Autoresearch 优化
   run: |
-    codex exec --dangerously-bypass-approvals-and-sandbox <<'PROMPT'
+    codex exec --full-auto <<'PROMPT'
     $codex-autoresearch
     Mode: exec
     Goal: Reduce type errors
@@ -461,7 +461,7 @@ security + fix               # 审计并修复一步到位
 
 退出码：0 = 已改善，1 = 无改善，2 = 硬阻塞。
 
-在 CI 中使用 `codex exec` 前，请先配置好 Codex CLI 认证。在受控自动化环境里，建议优先使用 `codex exec --dangerously-bypass-approvals-and-sandbox ...`，这样独立 `exec` 运行会与托管 runtime 默认的 `danger_full_access` 策略保持一致。对于程序化运行，优先使用 API key 认证。
+在 CI 中使用 `codex exec` 前，请先配置好 Codex CLI 认证。在受控自动化环境里，建议优先使用 `codex exec --full-auto ...`，这样独立 `exec` 运行会与托管 runtime 默认的沙箱化 `workspace_write` 策略保持一致。如果确实需要不受限的嵌套会话，再显式切换到 `danger_full_access`。对于程序化运行，优先使用 API key 认证。
 
 如果 `Mode: exec` 由 skill 自带的 helper scripts 驱动，不要先手工重命名 repo 根目录中的旧工件。`autoresearch_init_run.py --mode exec ...` 会自动把默认的 `research-results.tsv` 和 `autoresearch-state.json` 归档为 `research-results.prev.tsv` 和 `autoresearch-state.prev.json`，然后再初始化新的执行。
 
@@ -515,7 +515,7 @@ iteration  commit   metric  delta   status    description
 - 如果实验跨多个仓库，确认后的 launch manifest 也可以声明 companion repos，并为每个仓库单独给出 scope。runtime preflight 会检查所有托管仓库，但 `research-results.tsv`、`autoresearch-state.json` 以及 runtime-control 工件仍然锚定在主仓库
 - 在这种模型下，TSV 的 `commit` 列仍然只记录主仓库提交；companion repo 的逐仓 commit provenance 则记录在 `autoresearch-state.json` 中
 - 之后每个 background 托管循环都会启动一个非交互式 `codex exec` 会话，并通过 stdin 传入 runtime prompt
-- `execution_policy` 只作用于会再拉起嵌套 Codex 会话的路径，也就是 background 托管循环和 `exec`；当前 skill 默认是 `danger_full_access`
+- `execution_policy` 只作用于会再拉起嵌套 Codex 会话的路径，也就是 background 托管循环和 `exec`；当前 skill 默认是沙箱化的 `workspace_write`
 - 之后如果想看状态、停止、恢复，仍然通过 `$codex-autoresearch` 这个 skill 来做；其中 `status/stop` 只适用于 background 运行
 - `Mode: exec` 仍然保留给 CI / 高级自动化
 
@@ -630,7 +630,7 @@ codex-autoresearch/
 
 **它能搜索网络吗？** 是的，在多次策略转向后仍然卡住时。搜索结果作为假设处理，机械验证后才应用。
 
-**如何在 CI 中使用？** 使用 `Mode: exec` 或 `codex exec`。在受控自动化环境里，建议使用 `codex exec --dangerously-bypass-approvals-and-sandbox ...`，这样与默认 runtime 权限一致。所有配置预先提供，输出为 JSON，退出码表示成功/失败。
+**如何在 CI 中使用？** 使用 `Mode: exec` 或 `codex exec`。在受控自动化环境里，建议使用 `codex exec --full-auto ...`，这样与默认 runtime 的沙箱化 `workspace_write` 权限一致；只有明确需要不受限嵌套会话时才切换到 `danger_full_access`。所有配置预先提供，输出为 JSON，退出码表示成功/失败。
 
 **能同时测试多个想法吗？** 是的。在设置阶段启用并行实验。它使用 git worktree 同时测试最多 3 个假设。
 

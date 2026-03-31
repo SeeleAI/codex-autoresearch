@@ -1118,6 +1118,14 @@ class AutoresearchSupervisorLaunchTest(AutoresearchScriptsTestBase):
                 f"State path: {state_path.resolve()}",
                 prompt.replace("/var/", "/private/var/"),
             )
+            self.assertIn(
+                f"Project config doc: {(repo / '.agent-os' / 'autoresearch-config.md').resolve()}",
+                prompt.replace("/var/", "/private/var/"),
+            )
+            self.assertIn(
+                f"Project runtime doc: {(repo / '.agent-os' / 'autoresearch-runtime.md').resolve()}",
+                prompt.replace("/var/", "/private/var/"),
+            )
 
     def test_resume_prompt_accepts_repo_as_primary_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1192,6 +1200,8 @@ class AutoresearchSupervisorLaunchTest(AutoresearchScriptsTestBase):
             self.assertEqual(manifest["config"]["session_mode"], "background")
             self.assertEqual(manifest["config"]["scope"], "src/**/*.py")
             self.assertEqual(manifest["config"]["execution_policy"], "workspace_write")
+            self.assertEqual(manifest["config"]["git_policy"]["branch_strategy"], "dedicated_experiment_branch")
+            self.assertFalse(manifest["config"]["git_policy"]["auto_commit_enabled"])
             self.assertEqual(
                 manifest["config"]["repos"],
                 [
@@ -1438,6 +1448,7 @@ class AutoresearchSupervisorLaunchTest(AutoresearchScriptsTestBase):
     def test_runtime_start_requires_confirmed_launch_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
+            self.init_project_system(tmpdir)
             completed = self.run_script_completed(
                 "autoresearch_runtime_ctl.py",
                 "start",

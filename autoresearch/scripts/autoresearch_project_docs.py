@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import re
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +53,17 @@ AUTORESEARCH_RUNTIME_PATH = "autoresearch-runtime.md"
 PROGRESS_SNAPSHOT_PATH = "progress-snapshots.json"
 ARCHITECTURE_PATH = "architecture-milestones.md"
 ID_PATTERN = re.compile(r"\b([A-Z]{2,4})-(\d{3,})\b")
+MANAGED_GIT_POLICY_START = "<!-- AUTORESEARCH-MANAGED-GIT-POLICY START -->"
+MANAGED_GIT_POLICY_END = "<!-- AUTORESEARCH-MANAGED-GIT-POLICY END -->"
+DEFAULT_BRANCH_STRATEGY = "dedicated_experiment_branch"
+DEFAULT_GIT_POLICY = {
+    "auto_commit_enabled": False,
+    "policy_fingerprint": "unset",
+    "allowed_categories": [],
+    "custom_gitignore_rules": [],
+    "branch_strategy": DEFAULT_BRANCH_STRATEGY,
+    "managed_repo_paths": [],
+}
 
 
 def skill_root() -> Path:
@@ -77,6 +90,20 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def files_match(path_a: Path, path_b: Path) -> tuple[bool, bool]:
+    same_file = False
+    try:
+        same_file = os.path.samefile(path_a, path_b)
+    except OSError:
+        same_file = False
+    if same_file:
+        return True, True
+    try:
+        return read_text(path_a) == read_text(path_b), False
+    except OSError:
+        return False, False
+
+
 def project_system_status(project_root: Path, state_dir: str = STATE_DIR_NAME) -> dict[str, Any]:
     state_path = project_state_dir(project_root, state_dir)
     agents_path = project_root / AGENTS_FILE
@@ -84,6 +111,7 @@ def project_system_status(project_root: Path, state_dir: str = STATE_DIR_NAME) -
     missing_root: list[str] = []
     missing_files: list[str] = []
     same_file = False
+    files_aligned = False
 
     if not agents_path.exists():
         missing_root.append(AGENTS_FILE)
@@ -97,12 +125,9 @@ def project_system_status(project_root: Path, state_dir: str = STATE_DIR_NAME) -
                 missing_files.append(name)
 
     if agents_path.exists() and claude_path.exists():
-        try:
-            same_file = os.path.samefile(agents_path, claude_path)
-        except OSError:
-            same_file = False
+        files_aligned, same_file = files_match(agents_path, claude_path)
 
-    initialized = not missing_root and not missing_files and same_file
+    initialized = not missing_root and not missing_files and files_aligned
     return {
         "initialized": initialized,
         "project_root": str(project_root),
@@ -110,6 +135,7 @@ def project_system_status(project_root: Path, state_dir: str = STATE_DIR_NAME) -
         "missing_root": missing_root,
         "missing_files": missing_files,
         "claude_samefile": same_file,
+        "claude_matches_agents": files_aligned,
     }
 
 
@@ -166,10 +192,81 @@ def ensure_initial_item_ids(project_root: Path, state_dir: str = STATE_DIR_NAME)
         write_text(path, text.rstrip() + "\n\n- `TD-001`: bootstrap placeholder\n")
 
 
+def _normalize_string_list(values: Any) -> list[str]:
+    if values in (None, "", []):
+        return []
+    if isinstance(values, str):
+        raw_values = [values]
+    elif isinstance(values, list):
+        raw_values = values
+    else:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        if not isinstance(raw, str):
+            continue
+        value = raw.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def _policy_fingerprint(policy: dict[str, Any]) -> str:
+    serializable = {
+        "auto_commit_enabled": bool(policy.get("auto_commit_enabled", False)),
+        "allowed_categories": _normalize_string_list(policy.get("allowed_categories")),
+        "custom_gitignore_rules": _normalize_string_list(policy.get("custom_gitignore_rules")),
+        "branch_strategy": str(policy.get("branch_strategy") or DEFAULT_BRANCH_STRATEGY),
+        "managed_repo_paths": _normalize_string_list(policy.get("managed_repo_paths")),
+    }
+    digest = hashlib.sha256(
+        json.dumps(serializable, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return digest[:12]
+
+
+def normalize_managed_git_policy(config: dict[str, Any] | None, *, project_root: Path) -> dict[str, Any]:
+    config = dict(config or {})
+    raw_policy = config.get("git_policy")
+    policy = dict(DEFAULT_GIT_POLICY)
+    if isinstance(raw_policy, dict):
+        policy.update(raw_policy)
+    explicit_fingerprint = ""
+    if isinstance(raw_policy, dict):
+        raw_fingerprint = raw_policy.get("policy_fingerprint")
+        if isinstance(raw_fingerprint, str):
+            explicit_fingerprint = raw_fingerprint.strip()
+
+    repos = config.get("repos")
+    managed_repo_paths = []
+    if isinstance(repos, list):
+        for entry in repos:
+            if not isinstance(entry, dict):
+                continue
+            raw_path = entry.get("path")
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                continue
+            managed_repo_paths.append(str(Path(raw_path).resolve()))
+    if not managed_repo_paths:
+        managed_repo_paths = [str(project_root.resolve())]
+
+    policy["auto_commit_enabled"] = bool(policy.get("auto_commit_enabled", False))
+    policy["allowed_categories"] = _normalize_string_list(policy.get("allowed_categories"))
+    policy["custom_gitignore_rules"] = _normalize_string_list(policy.get("custom_gitignore_rules"))
+    policy["branch_strategy"] = str(policy.get("branch_strategy") or DEFAULT_BRANCH_STRATEGY)
+    policy["managed_repo_paths"] = _normalize_string_list(policy.get("managed_repo_paths")) or managed_repo_paths
+    policy["policy_fingerprint"] = explicit_fingerprint or _policy_fingerprint(policy)
+    return policy
+
+
 def render_autoresearch_config(config: dict[str, Any], *, mode: str, project_root: Path) -> str:
     repos = config.get("repos", [])
     companion = [f"- Companion repo: `{repo['path']}` :: `{repo['scope']}`" for repo in repos[1:]]
     iterations = config.get("iterations")
+    git_policy = normalize_managed_git_policy(config, project_root=project_root)
     return "\n".join(
         [
             "# Autoresearch Config",
@@ -192,6 +289,14 @@ def render_autoresearch_config(config: dict[str, Any], *, mode: str, project_roo
             "",
             f"- Primary repo: `{project_root}`",
             *(companion or ["- Companion repos: none"]),
+            "",
+            "## Managed Git Policy",
+            "",
+            MANAGED_GIT_POLICY_START,
+            "```json",
+            json.dumps(git_policy, indent=2, sort_keys=True),
+            "```",
+            MANAGED_GIT_POLICY_END,
             "",
             "## Autonomous Boundaries",
             "",
@@ -289,7 +394,10 @@ def sync_project_docs(
     runtime_payload = read_runtime_payload(runtime_path) if runtime_path.exists() else None
     state_path_dir = project_state_dir(repo, state_dir)
 
-    config_text = render_autoresearch_config(state_payload.get("config", {}), mode=state_payload.get("mode", "loop"), project_root=repo)
+    state_config = dict(state_payload.get("config", {}))
+    state_config["git_policy"] = normalize_managed_git_policy(state_config, project_root=repo)
+    state_payload["config"] = state_config
+    config_text = render_autoresearch_config(state_config, mode=state_payload.get("mode", "loop"), project_root=repo)
     write_text(state_path_dir / AUTORESEARCH_CONFIG_PATH, config_text)
 
     progress_payload = persist_progress_snapshot(

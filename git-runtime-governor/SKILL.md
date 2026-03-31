@@ -101,3 +101,4 @@ Use `scripts/git_runtime_governor.py` for deterministic helpers:
 - `render-gitignore` to generate the managed `.gitignore` block
 - `merge-gitignore` to merge or refresh the managed block in a real `.gitignore`
 - `commit-message` to produce the structured auto-commit message
+- `governed-commit` to apply the stored policy, stage in-policy files, and create the governed iteration commit

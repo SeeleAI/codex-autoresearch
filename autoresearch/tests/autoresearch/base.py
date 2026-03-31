@@ -23,6 +23,11 @@ DEFAULT_GUARD_CMD = f"{PYTHON_CMD} -m py_compile src"
 class AutoresearchScriptsTestBase(unittest.TestCase):
     maxDiff = None
 
+    def init_git_repo(self, repo: Path) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+
     def init_project_system(self, repo: Path) -> None:
         self.run_script_text("init_project_system.py", str(repo))
         self.run_script_text("validate_project_system.py", str(repo))

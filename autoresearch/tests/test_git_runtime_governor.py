@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -82,6 +85,73 @@ class GitRuntimeGovernorTest(unittest.TestCase):
         self.assertIn("[policy=abc123]", message)
         self.assertIn("summary: retain faster parser branch", message)
         self.assertIn("categories: autoresearch-state, document-files", message)
+
+    def test_governed_commit_stages_in_scope_files_and_uses_policy_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+            (repo / ".agent-os").mkdir()
+            (repo / "src").mkdir()
+            (repo / "src" / "app.py").write_text("print('before')\n", encoding="utf-8")
+            (repo / "notes.txt").write_text("ignore me\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "baseline"], cwd=repo, check=True)
+
+            policy = {
+                "allowed_categories": [],
+                "auto_commit_enabled": True,
+                "branch_strategy": "dedicated_experiment_branch",
+                "custom_gitignore_rules": [],
+                "managed_repo_paths": [str(repo.resolve())],
+                "policy_fingerprint": "abc123def456",
+            }
+            (repo / ".agent-os" / "autoresearch-config.md").write_text(
+                "\n".join(
+                    [
+                        "# Autoresearch Config",
+                        "",
+                        "## Run Contract",
+                        "",
+                        "- Scope: `src/**/*.py`",
+                        "",
+                        "## Managed Git Policy",
+                        "",
+                        "<!-- AUTORESEARCH-MANAGED-GIT-POLICY START -->",
+                        "```json",
+                        json.dumps(policy, indent=2, sort_keys=True),
+                        "```",
+                        "<!-- AUTORESEARCH-MANAGED-GIT-POLICY END -->",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            (repo / "src" / "app.py").write_text("print('after')\n", encoding="utf-8")
+            (repo / "notes.txt").write_text("still out of scope\n", encoding="utf-8")
+
+            payload = self.module.governed_commit(
+                repo=repo,
+                config_path=repo / ".agent-os" / "autoresearch-config.md",
+                scope_text="src/**/*.py",
+                iteration=1,
+                mode="loop",
+                summary="keep source change",
+            )
+
+            self.assertEqual(payload["policy_fingerprint"], "abc123def456")
+            self.assertIn("src/app.py", payload["staged_files"])
+            self.assertNotIn("notes.txt", payload["staged_files"])
+            message = subprocess.run(
+                ["git", "-C", str(repo), "log", "-1", "--format=%B"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            self.assertIn("autoresearch: iteration 001", message)
+            self.assertIn("[policy=abc123def456]", message)
 
 
 if __name__ == "__main__":

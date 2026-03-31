@@ -84,7 +84,7 @@ Once execution begins, keep the runtime contract tiny:
 Every iterating mode (loop, debug, fix, security, ship) shares the same cycle:
 
 ```
-  Pick hypothesis  -->  Edit files  -->  git commit  -->  Run verify + guard
+  Pick hypothesis  -->  Edit files  -->  Run verify + guard  -->  Governed commit
   (consult lessons,                                            |
    apply perspectives,                                     improved?
    filter by environment)                                 /         \
@@ -104,10 +104,10 @@ Every iterating mode (loop, debug, fix, security, ship) shares the same cycle:
 
 1. **Hypothesis** -- one focused idea based on what worked, what failed, what is untried
 2. **Edit** -- change files within the declared scope only
-3. **Commit** -- `git commit` before verification (so revert is always safe)
-4. **Verify** -- run the verify command, extract the metric value
-5. **Guard** -- if set, run the guard command to check for regressions
-6. **Decide** -- metric improved and guard passed = keep; otherwise revert
+3. **Verify** -- run the verify command, extract the metric value
+4. **Guard** -- if set, run the guard command to check for regressions
+5. **Governed Commit** -- create the policy-governed iteration commit after verification and guard handling
+6. **Decide** -- metric improved and guard passed = keep; otherwise revert using the approved rollback strategy
 7. **Log** -- record the result before starting the next experiment
 
 Revert uses the rollback strategy approved during setup. In a dedicated experiment branch/worktree with pre-launch approval, it may use `git reset --hard HEAD~1`; otherwise it uses `git revert --no-edit HEAD`.
@@ -627,7 +627,7 @@ Non-interactive mode for automation pipelines. Differences from interactive mode
 - Reads lessons if available, but does not write them
 - Exit codes: 0 = improved, 1 = no improvement, 2 = hard blocker
 
-Before using `codex exec` in CI, configure Codex CLI authentication in advance. In controlled automation environments, prefer `codex exec --dangerously-bypass-approvals-and-sandbox ...` so the verify command has the same full-access behavior as the managed runtime. For programmatic runs, API key authentication is the preferred option.
+Before using `codex exec` in CI, configure Codex CLI authentication in advance. In controlled automation environments, prefer `codex exec --full-auto ...` so standalone exec runs match the managed runtime's default sandboxed `workspace_write` policy. If you truly need unrestricted nested sessions, opt into `danger_full_access` explicitly. For programmatic runs, API key authentication is the preferred option.
 
 When the bundled helper scripts drive `Mode: exec`, do not manually rename old repo-root artifacts first. `autoresearch_init_run.py --mode exec ...` already archives the default `research-results.tsv` and `autoresearch-state.json` files to `research-results.prev.tsv` and `autoresearch-state.prev.json` before it initializes the fresh run. Keep `autoresearch_exec_state.py --cleanup` as the final serial helper step, after the last `autoresearch_record_iteration.py` / `autoresearch_select_parallel_batch.py` call.
 

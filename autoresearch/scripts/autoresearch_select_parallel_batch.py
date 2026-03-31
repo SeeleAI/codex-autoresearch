@@ -27,6 +27,7 @@ from autoresearch_helpers import (
 )
 from autoresearch_lessons import append_iteration_lesson, lessons_path_from_results
 from autoresearch_preflight import evaluate_managed_repos_preflight
+from autoresearch_project_docs import project_system_status, sync_project_docs
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -331,6 +332,18 @@ def main() -> int:
         iteration=next_iteration,
     )
 
+    progress_snapshot: dict[str, object] | None = None
+    progress_snapshot_status = "unavailable"
+    if project_system_status(repo)["initialized"]:
+        sync_result = sync_project_docs(
+            results_path=results_path,
+            state_path_arg=str(state_path),
+            event_kind=main_status,
+            event_summary=main_row["description"],
+        )
+        progress_snapshot = sync_result.get("progress_snapshot")
+        progress_snapshot_status = "persisted" if progress_snapshot is not None else "error"
+
     print(
         json.dumps(
             {
@@ -341,6 +354,8 @@ def main() -> int:
                 "retained_labels": final_payload["state"].get("current_labels", []),
                 "batch_file": str(args.batch_file),
                 "message": f"Parallel batch recorded at iteration {next_iteration}.",
+                "progress_snapshot": progress_snapshot,
+                "progress_snapshot_status": progress_snapshot_status,
             },
             indent=2,
             sort_keys=True,

@@ -29,7 +29,11 @@ from autoresearch_core import SESSION_MODE_CHOICES
 from autoresearch_hook_context import write_hook_context_pointer
 from autoresearch_preflight import evaluate_managed_repos_preflight
 from autoresearch_runtime_common import DEFAULT_EXECUTION_POLICY, EXECUTION_POLICY_CHOICES
-from autoresearch_project_docs import project_system_status, sync_project_docs
+from autoresearch_project_docs import (
+    normalize_managed_git_policy,
+    project_system_status,
+    sync_project_docs,
+)
 
 
 class HardBlockerError(AutoresearchError):
@@ -227,6 +231,7 @@ def main() -> int:
         config["required_stop_labels"] = required_stop_labels
     if required_keep_labels:
         config["required_keep_labels"] = required_keep_labels
+    config["git_policy"] = normalize_managed_git_policy(config, project_root=repo)
     summary = {
         "iteration": 0,
         "baseline_metric": baseline_metric,

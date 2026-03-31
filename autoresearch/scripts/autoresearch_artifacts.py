@@ -4,8 +4,10 @@ from __future__ import annotations
 import csv
 import json
 import os
+import sys
 import tempfile
 import time
+import types
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,20 @@ from autoresearch_core import (
     utc_now,
     REQUIRED_STATE_FIELDS,
 )
+
+
+def _register_scripts_module_alias() -> None:
+    """Expose this module under scripts.autoresearch_artifacts for legacy patch targets."""
+    scripts_package = sys.modules.get("scripts")
+    if scripts_package is None:
+        scripts_package = types.ModuleType("scripts")
+        scripts_package.__path__ = []  # type: ignore[attr-defined]
+        sys.modules["scripts"] = scripts_package
+    setattr(scripts_package, "autoresearch_artifacts", sys.modules[__name__])
+    sys.modules.setdefault("scripts.autoresearch_artifacts", sys.modules[__name__])
+
+
+_register_scripts_module_alias()
 
 
 def read_json(path: Path) -> dict[str, Any]:

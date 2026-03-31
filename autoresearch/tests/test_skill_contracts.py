@@ -106,6 +106,31 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("Background execution policy: `workspace_write` by default", wizard)
         self.assertIn("Run mode: foreground, or background with `workspace_write` / `danger_full_access`?", wizard)
 
+    def test_exec_docs_align_on_workspace_write_default(self) -> None:
+        canonical_docs = [
+            REPO_ROOT / "README.md",
+            REPO_ROOT / "docs" / "GUIDE.md",
+            REPO_ROOT / "references" / "exec-workflow.md",
+            REPO_ROOT / "docs" / "i18n" / "README_ZH.md",
+        ]
+        for path in canonical_docs:
+            content = path.read_text(encoding="utf-8")
+            self.assertIn("workspace_write", content, path.as_posix())
+            self.assertIn("--full-auto", content, path.as_posix())
+
+        example_docs = [
+            REPO_ROOT / "README.md",
+            REPO_ROOT / "docs" / "EXAMPLES.md",
+            *sorted((REPO_ROOT / "docs" / "i18n").glob("README_*.md")),
+        ]
+        for path in example_docs:
+            content = path.read_text(encoding="utf-8")
+            self.assertNotIn(
+                "codex exec --dangerously-bypass-approvals-and-sandbox <<'PROMPT'",
+                content,
+                path.as_posix(),
+            )
+
     def test_git_runtime_governor_contract_is_wired(self) -> None:
         engine_skill = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
         protocol = (REPO_ROOT / "references" / "autonomous-loop-protocol.md").read_text(encoding="utf-8")
@@ -123,7 +148,31 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn(".agent-os/autoresearch-config.md", protocol)
         self.assertTrue(template_path.exists())
         self.assertIn("per-iteration auto-commit", governor_skill)
+        self.assertIn("governed-commit", governor_skill)
         self.assertIn("Do not add `agents/openai.yaml`", governor_skill)
+
+    def test_canonical_docs_no_longer_describe_commit_before_verification(self) -> None:
+        paths = [
+            REPO_ROOT / "README.md",
+            REPO_ROOT / "docs" / "GUIDE.md",
+            REPO_ROOT / "references" / "fix-workflow.md",
+        ]
+        for path in paths:
+            content = path.read_text(encoding="utf-8")
+            self.assertNotIn("before verification", content, path.as_posix())
+            self.assertIn("govern", content.lower(), path.as_posix())
+
+    def test_runtime_smoke_bootstraps_project_system_before_launch(self) -> None:
+        script = (REPO_ROOT / "scripts" / "run_skill_e2e.sh").read_text(encoding="utf-8")
+
+        init_call = 'init_project_system "$skill_root" "$repo"'
+        launch_call = 'python3 "$skill_root/scripts/autoresearch_runtime_ctl.py" launch'
+
+        self.assertIn(init_call, script)
+        self.assertIn('init_project_system.py', script)
+        self.assertIn('validate_project_system.py', script)
+        self.assertIn(launch_call, script)
+        self.assertLess(script.index(init_call), script.index(launch_call))
 
 
 if __name__ == "__main__":

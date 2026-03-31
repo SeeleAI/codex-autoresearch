@@ -82,8 +82,8 @@ def build_runtime_prompt(
         [
             "",
             f"Project recovery entrypoint: AGENTS.md -> {STATE_DIR_NAME}/project-index.md -> active items -> {STATE_DIR_NAME}/run-log.md",
-            f"Project config doc: {results_path.parent / STATE_DIR_NAME / 'autoresearch-config.md'}",
-            f"Project runtime doc: {results_path.parent / STATE_DIR_NAME / 'autoresearch-runtime.md'}",
+            f"Project config doc: {primary_repo / STATE_DIR_NAME / 'autoresearch-config.md'}",
+            f"Project runtime doc: {primary_repo / STATE_DIR_NAME / 'autoresearch-runtime.md'}",
             "",
             f"Results path: {results_path}",
             f"State path: {state_path}",

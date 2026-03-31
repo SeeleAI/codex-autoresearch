@@ -123,6 +123,48 @@ def evaluate_launch_context(
             "reasons": reasons,
         }
 
+    if resume["decision"] == "full_resume":
+        reasons.extend(str(reason) for reason in resume["reasons"])
+        if launch_manifest is None:
+            reasons.append(
+                "Runs that predate autoresearch-launch.json are not resumable under the managed runtime. Start fresh through the interactive launch flow."
+            )
+            return {
+                "decision": "needs_human",
+                "reason": "fresh_start_required",
+                "resume_strategy": "fresh_start",
+                "results_path": str(results_path),
+                "state_path": str(state_path),
+                "launch_path": str(launch_path),
+                "runtime_path": str(runtime_path),
+                "launch_manifest_present": False,
+                "runtime_present": runtime_payload is not None or runtime_error is not None,
+                "runtime_running": False,
+                "reasons": reasons,
+                "project_system": project_system_status(results_repo_root(results_path)),
+            }
+
+    if resume["decision"] == "tsv_fallback":
+        reasons.extend(str(reason) for reason in resume["reasons"])
+        if launch_manifest is None:
+            reasons.append(
+                "TSV reconstruction is available, but a detached runtime still needs a confirmed launch manifest."
+            )
+            return {
+                "decision": "needs_human",
+                "reason": "launch_manifest_required",
+                "resume_strategy": "mini_resume",
+                "results_path": str(results_path),
+                "state_path": str(state_path),
+                "launch_path": str(launch_path),
+                "runtime_path": str(runtime_path),
+                "launch_manifest_present": False,
+                "runtime_present": runtime_payload is not None or runtime_error is not None,
+                "runtime_running": False,
+                "reasons": reasons,
+                "project_system": project_system_status(results_repo_root(results_path)),
+            }
+
     project_root = results_repo_root(results_path)
     project_status = project_system_status(project_root)
     if not project_status["initialized"]:
@@ -189,24 +231,6 @@ def evaluate_launch_context(
         }
 
     if resume["decision"] == "full_resume":
-        reasons.extend(str(reason) for reason in resume["reasons"])
-        if launch_manifest is None:
-            reasons.append(
-                "Runs that predate autoresearch-launch.json are not resumable under the managed runtime. Start fresh through the interactive launch flow."
-            )
-            return {
-                "decision": "needs_human",
-                "reason": "fresh_start_required",
-                "resume_strategy": "fresh_start",
-                "results_path": str(results_path),
-                "state_path": str(state_path),
-                "launch_path": str(launch_path),
-                "runtime_path": str(runtime_path),
-                "launch_manifest_present": False,
-                "runtime_present": runtime_payload is not None or runtime_error is not None,
-                "runtime_running": False,
-                "reasons": reasons,
-            }
         reasons.append(
             "Results log and state are available; the runtime can continue from the saved config."
         )
@@ -226,25 +250,6 @@ def evaluate_launch_context(
         }
 
     if resume["decision"] == "tsv_fallback":
-        reasons.extend(str(reason) for reason in resume["reasons"])
-        if launch_manifest is None:
-            reasons.append(
-                "TSV reconstruction is available, but a detached runtime still needs a confirmed launch manifest."
-            )
-            return {
-                "decision": "needs_human",
-                "reason": "launch_manifest_required",
-                "resume_strategy": "mini_resume",
-                "results_path": str(results_path),
-                "state_path": str(state_path),
-                "launch_path": str(launch_path),
-                "runtime_path": str(runtime_path),
-                "launch_manifest_present": False,
-                "runtime_present": runtime_payload is not None or runtime_error is not None,
-                "runtime_running": False,
-                "reasons": reasons,
-                "project_system": project_status,
-            }
         reasons.append("Results log exists without a trustworthy JSON state; runtime can continue from TSV reconstruction.")
         return {
             "decision": "resumable",

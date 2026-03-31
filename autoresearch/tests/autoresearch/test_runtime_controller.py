@@ -22,10 +22,27 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import autoresearch_runtime_ops
+from autoresearch_project_docs import normalize_managed_git_policy
 
 
 class AutoresearchRuntimeControllerTest(AutoresearchScriptsTestBase):
     maxDiff = None
+
+    def test_normalize_managed_git_policy_preserves_explicit_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            policy = normalize_managed_git_policy(
+                {
+                    "scope": "src/**/*.py",
+                    "git_policy": {
+                        "auto_commit_enabled": True,
+                        "policy_fingerprint": "manualfinger01",
+                    },
+                },
+                project_root=repo,
+            )
+
+            self.assertEqual(policy["policy_fingerprint"], "manualfinger01")
 
     def test_create_launch_manifest_persists_required_stop_labels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -793,6 +810,7 @@ class AutoresearchRuntimeControllerTest(AutoresearchScriptsTestBase):
     def test_runtime_launch_blocks_when_codex_bin_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
+            self.init_project_system(tmpdir)
 
             completed = self.run_script_completed(
                 "autoresearch_runtime_ctl.py",
@@ -829,6 +847,7 @@ class AutoresearchRuntimeControllerTest(AutoresearchScriptsTestBase):
             companion = root / "companion"
             primary.mkdir()
             companion.mkdir()
+            self.init_project_system(primary)
             subprocess.run(["git", "init", str(primary)], check=True, capture_output=True, text=True)
             subprocess.run(["git", "init", str(companion)], check=True, capture_output=True, text=True)
             (companion / "notes.txt").write_text("drift\n", encoding="utf-8")
@@ -1220,6 +1239,312 @@ class AutoresearchRuntimeControllerTest(AutoresearchScriptsTestBase):
             codex_args = args_path.read_text(encoding="utf-8")
             self.assertIn("--dangerously-bypass-approvals-and-sandbox", codex_args)
             self.assertNotIn("--full-auto", codex_args)
+
+    def test_runtime_controller_marks_needs_human_when_state_advances_without_governed_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as tools_tmp:
+            tmpdir = Path(tmp)
+            fake_codex_path = Path(tools_tmp) / "fake-codex"
+            (tmpdir / "src").mkdir()
+            (tmpdir / "src" / "app.py").write_text("print('before')\n", encoding="utf-8")
+            self.init_git_repo(tmpdir)
+            subprocess.run(["git", "add", "."], cwd=tmpdir, check=True)
+            subprocess.run(["git", "commit", "-m", "baseline"], cwd=tmpdir, check=True)
+
+            self.create_launch_manifest(
+                tmpdir,
+                stop_condition="stop when metric reaches 0",
+            )
+            self.write_fake_codex(
+                fake_codex_path,
+                body_lines=[
+                    'if [[ "${1:-}" != "exec" ]]; then',
+                    '  echo "expected codex exec" >&2',
+                    "  exit 64",
+                    "fi",
+                    "shift",
+                    'repo=""',
+                    'while [[ $# -gt 0 ]]; do',
+                    '  case "$1" in',
+                    '    -C) repo="$2"; shift 2 ;;',
+                    '    -) shift ;;',
+                    '    *) shift ;;',
+                    '  esac',
+                    'done',
+                    "cat >/dev/null",
+                    'if [[ -n "$repo" ]]; then cd "$repo"; fi',
+                    f'python_bin="{sys.executable}"',
+                    f'init_script="{SCRIPTS_DIR / "autoresearch_init_run.py"}"',
+                    f'record_script="{SCRIPTS_DIR / "autoresearch_record_iteration.py"}"',
+                    'if [[ ! -f "research-results.tsv" ]]; then',
+                    '  baseline_commit="$(git rev-parse HEAD)"',
+                    '  "$python_bin" "$init_script" --results-path research-results.tsv --state-path autoresearch-state.json --mode loop --session-mode background --goal "Reduce failures" --scope "src/**/*.py" --metric-name "failure count" --direction lower --verify "pytest -q" --stop-condition "stop when metric reaches 0" --baseline-metric 10 --baseline-commit "$baseline_commit" --baseline-description "baseline failures"',
+                    "fi",
+                    'printf "print(\'after\')\\n" > src/app.py',
+                    'export TEST_REPO="$PWD"',
+                    'export TEST_STATE="$PWD/autoresearch-state.json"',
+                    'export TEST_CONFIG="$PWD/.agent-os/autoresearch-config.md"',
+                    'export TEST_FINGERPRINT="runtimecheck01"',
+                    '"$python_bin" - <<\'PY\'',
+                    "import json",
+                    "import os",
+                    "from pathlib import Path",
+                    "",
+                    "state_path = Path(os.environ['TEST_STATE'])",
+                    "config_path = Path(os.environ['TEST_CONFIG'])",
+                    "policy = {",
+                    "    'allowed_categories': [],",
+                    "    'auto_commit_enabled': True,",
+                    "    'branch_strategy': 'dedicated_experiment_branch',",
+                    "    'custom_gitignore_rules': [],",
+                    "    'managed_repo_paths': [os.environ['TEST_REPO']],",
+                    "    'policy_fingerprint': os.environ['TEST_FINGERPRINT'],",
+                    "}",
+                    "payload = json.loads(state_path.read_text(encoding='utf-8'))",
+                    "payload['config']['git_policy'] = policy",
+                    "state_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\\n', encoding='utf-8')",
+                    "text = config_path.read_text(encoding='utf-8')",
+                    "start = '<!-- AUTORESEARCH-MANAGED-GIT-POLICY START -->'",
+                    "end = '<!-- AUTORESEARCH-MANAGED-GIT-POLICY END -->'",
+                    "prefix, rest = text.split(start, 1)",
+                    "_, suffix = rest.split(end, 1)",
+                    "block = start + '\\n```json\\n' + json.dumps(policy, indent=2, sort_keys=True) + '\\n```\\n' + end",
+                    "config_path.write_text(prefix + block + suffix, encoding='utf-8')",
+                    "PY",
+                    'current_commit="$(git rev-parse HEAD)"',
+                    '  "$python_bin" "$record_script" --results-path research-results.tsv --state-path autoresearch-state.json --status keep --metric 0 --commit "$current_commit" --description "ungoverned keep"',
+                ],
+            )
+
+            self.run_script(
+                "autoresearch_runtime_ctl.py",
+                "start",
+                "--repo",
+                str(tmpdir),
+                "--codex-bin",
+                str(fake_codex_path),
+                "--sleep-seconds",
+                "0",
+                "--max-stagnation",
+                "2",
+            )
+            status = self.wait_for_runtime_status(tmpdir, {"needs_human"})
+            self.assertEqual(status["reason"], "governor_contract_violation")
+            self.assertIn("governed commit prefix", status["error"])
+
+    def test_runtime_controller_accepts_governed_commit_after_state_advances(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as tools_tmp:
+            tmpdir = Path(tmp)
+            fake_codex_path = Path(tools_tmp) / "fake-codex"
+            (tmpdir / "src").mkdir()
+            (tmpdir / "src" / "app.py").write_text("print('before')\n", encoding="utf-8")
+            self.init_git_repo(tmpdir)
+            subprocess.run(["git", "add", "."], cwd=tmpdir, check=True)
+            subprocess.run(["git", "commit", "-m", "baseline"], cwd=tmpdir, check=True)
+
+            self.create_launch_manifest(
+                tmpdir,
+                stop_condition="stop when metric reaches 0",
+            )
+            self.write_fake_codex(
+                fake_codex_path,
+                body_lines=[
+                    'if [[ "${1:-}" != "exec" ]]; then',
+                    '  echo "expected codex exec" >&2',
+                    "  exit 64",
+                    "fi",
+                    "shift",
+                    'repo=""',
+                    'while [[ $# -gt 0 ]]; do',
+                    '  case "$1" in',
+                    '    -C) repo="$2"; shift 2 ;;',
+                    '    -) shift ;;',
+                    '    *) shift ;;',
+                    '  esac',
+                    'done',
+                    "cat >/dev/null",
+                    'if [[ -n "$repo" ]]; then cd "$repo"; fi',
+                    f'python_bin="{sys.executable}"',
+                    f'init_script="{SCRIPTS_DIR / "autoresearch_init_run.py"}"',
+                    f'record_script="{SCRIPTS_DIR / "autoresearch_record_iteration.py"}"',
+                    f'govern_script="{REPO_ROOT.parent / "git-runtime-governor" / "scripts" / "git_runtime_governor.py"}"',
+                    'if [[ ! -f "research-results.tsv" ]]; then',
+                    '  baseline_commit="$(git rev-parse HEAD)"',
+                    '  "$python_bin" "$init_script" --results-path research-results.tsv --state-path autoresearch-state.json --mode loop --session-mode background --goal "Reduce failures" --scope "src/**/*.py" --metric-name "failure count" --direction lower --verify "pytest -q" --stop-condition "stop when metric reaches 0" --baseline-metric 10 --baseline-commit "$baseline_commit" --baseline-description "baseline failures"',
+                    "fi",
+                    'printf "print(\'after\')\\n" > src/app.py',
+                    'export TEST_REPO="$PWD"',
+                    'export TEST_STATE="$PWD/autoresearch-state.json"',
+                    'export TEST_CONFIG="$PWD/.agent-os/autoresearch-config.md"',
+                    'export TEST_FINGERPRINT="runtimecheck02"',
+                    '"$python_bin" - <<\'PY\'',
+                    "import json",
+                    "import os",
+                    "from pathlib import Path",
+                    "",
+                    "state_path = Path(os.environ['TEST_STATE'])",
+                    "config_path = Path(os.environ['TEST_CONFIG'])",
+                    "policy = {",
+                    "    'allowed_categories': [],",
+                    "    'auto_commit_enabled': True,",
+                    "    'branch_strategy': 'dedicated_experiment_branch',",
+                    "    'custom_gitignore_rules': [],",
+                    "    'managed_repo_paths': [os.environ['TEST_REPO']],",
+                    "    'policy_fingerprint': os.environ['TEST_FINGERPRINT'],",
+                    "}",
+                    "payload = json.loads(state_path.read_text(encoding='utf-8'))",
+                    "payload['config']['git_policy'] = policy",
+                    "state_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\\n', encoding='utf-8')",
+                    "text = config_path.read_text(encoding='utf-8')",
+                    "start = '<!-- AUTORESEARCH-MANAGED-GIT-POLICY START -->'",
+                    "end = '<!-- AUTORESEARCH-MANAGED-GIT-POLICY END -->'",
+                    "prefix, rest = text.split(start, 1)",
+                    "_, suffix = rest.split(end, 1)",
+                    "block = start + '\\n```json\\n' + json.dumps(policy, indent=2, sort_keys=True) + '\\n```\\n' + end",
+                    "config_path.write_text(prefix + block + suffix, encoding='utf-8')",
+                    "PY",
+                    'commit="$("$python_bin" "$govern_script" governed-commit --repo "$PWD" --scope "src/**/*.py" --iteration 1 --mode loop --summary "governed keep" | "$python_bin" -c \'import json,sys; print(json.load(sys.stdin)["commit"])\' )"',
+                    '  "$python_bin" "$record_script" --results-path research-results.tsv --state-path autoresearch-state.json --status keep --metric 0 --commit "$commit" --description "governed keep"',
+                ],
+            )
+
+            self.run_script(
+                "autoresearch_runtime_ctl.py",
+                "start",
+                "--repo",
+                str(tmpdir),
+                "--codex-bin",
+                str(fake_codex_path),
+                "--sleep-seconds",
+                "0",
+                "--max-stagnation",
+                "2",
+            )
+            status = self.wait_for_runtime_status(tmpdir, {"terminal"})
+            self.assertEqual(status["reason"], "goal_reached")
+
+    def test_evaluate_governed_commit_contract_checks_companion_repo_commits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            companion = root / "companion"
+            for repo in (primary, companion):
+                (repo / "src").mkdir(parents=True)
+                (repo / "src" / "app.py").write_text("print('before')\n", encoding="utf-8")
+                self.init_git_repo(repo)
+                subprocess.run(["git", "add", "."], cwd=repo, check=True)
+                subprocess.run(["git", "commit", "-m", "baseline"], cwd=repo, check=True)
+
+            state_path = primary / "autoresearch-state.json"
+            self.run_script(
+                "autoresearch_init_run.py",
+                "--results-path",
+                str(primary / "research-results.tsv"),
+                "--state-path",
+                str(state_path),
+                "--mode",
+                "loop",
+                "--session-mode",
+                "background",
+                "--goal",
+                "Reduce failures across repos",
+                "--scope",
+                "src/**/*.py",
+                "--companion-repo-scope",
+                f"{companion}=src/**/*.py",
+                "--metric-name",
+                "failure count",
+                "--direction",
+                "lower",
+                "--verify",
+                "pytest -q",
+                "--baseline-metric",
+                "10",
+                "--baseline-commit",
+                subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=primary,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.strip(),
+                "--baseline-description",
+                "baseline failures",
+            )
+
+            fingerprint = "companions01"
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            payload["config"]["git_policy"] = {
+                "allowed_categories": [],
+                "auto_commit_enabled": True,
+                "branch_strategy": "dedicated_experiment_branch",
+                "custom_gitignore_rules": [],
+                "managed_repo_paths": [str(primary.resolve()), str(companion.resolve())],
+                "policy_fingerprint": fingerprint,
+            }
+            state_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            previous_state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+
+            (primary / "src" / "app.py").write_text("print('after primary')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=primary, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "commit",
+                    "-m",
+                    (
+                        "autoresearch: iteration 001 [mode=loop] "
+                        f"[policy={fingerprint}]\n\nsummary: primary keep\ncategories: none\n"
+                    ),
+                ],
+                cwd=primary,
+                check=True,
+            )
+            primary_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=primary,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+
+            (companion / "src" / "app.py").write_text("print('after companion')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=companion, check=True)
+            subprocess.run(["git", "commit", "-m", "manual companion change"], cwd=companion, check=True)
+            companion_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=companion,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+
+            self.run_script(
+                "autoresearch_record_iteration.py",
+                "--results-path",
+                str(primary / "research-results.tsv"),
+                "--state-path",
+                str(state_path),
+                "--status",
+                "keep",
+                "--metric",
+                "0",
+                "--commit",
+                primary_commit,
+                "--description",
+                "multi repo keep",
+                "--repo-commit",
+                f"{companion}={companion_commit}",
+            )
+
+            error = autoresearch_runtime_ops.evaluate_governed_commit_contract(
+                repo=primary,
+                state_path=state_path,
+                previous_state_payload=previous_state_payload,
+            )
+
+            self.assertIsNotNone(error)
+            self.assertIn(str(companion.resolve()), error)
+            self.assertIn("governed commit prefix", error)
 
     def test_runtime_controller_retries_preinit_failures_then_stops(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
