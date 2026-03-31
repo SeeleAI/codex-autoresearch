@@ -174,8 +174,8 @@ SHARED LOOP (forever or N times):
   2. Pick ONE hypothesis (apply perspectives, filter by environment)
      -- or N hypotheses if parallel mode is active
   3. Make ONE atomic change
-  4. git commit (before verification)
-  5. Run mechanical verification + guard
+  4. Run mechanical verification + guard
+  5. Run governed git auto-commit
   6. Improved -> keep (extract lesson). Worse -> approved rollback strategy. Crashed -> fix or skip.
   7. Log the result
   8. Health check (disk, git, verify health)
@@ -464,7 +464,7 @@ Non-interactive mode for automation pipelines. All config is provided upfront --
 # GitHub Actions example
 - name: Autoresearch optimization
   run: |
-    codex exec --dangerously-bypass-approvals-and-sandbox <<'PROMPT'
+    codex exec --full-auto <<'PROMPT'
     $codex-autoresearch
     Mode: exec
     Goal: Reduce type errors

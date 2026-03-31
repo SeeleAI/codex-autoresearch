@@ -19,6 +19,21 @@
 - Primary repo: [path or relative label]
 - Companion repos: [none or list]
 
+## Managed Git Policy
+
+<!-- AUTORESEARCH-MANAGED-GIT-POLICY START -->
+```json
+{
+  "allowed_categories": [],
+  "auto_commit_enabled": false,
+  "branch_strategy": "dedicated_experiment_branch",
+  "custom_gitignore_rules": [],
+  "managed_repo_paths": [],
+  "policy_fingerprint": "unset"
+}
+```
+<!-- AUTORESEARCH-MANAGED-GIT-POLICY END -->
+
 ## Autonomous Boundaries
 
 - The agent must keep project documents and runtime artifacts synchronized.
